@@ -54,3 +54,10 @@ class CompareResponse(BaseModel):
         default=None,
         description="Reserved for Sprint 2 comparison results.",
     )
+    session_token: str | None = Field(
+        default=None,
+        description=(
+            "Token identifying the stored comparison session. Null when "
+            "persistence is disabled or the database is unavailable."
+        ),
+    )

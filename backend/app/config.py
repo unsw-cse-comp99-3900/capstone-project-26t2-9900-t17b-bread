@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Always load backend/.env regardless of the shell's current working directory.
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = _BACKEND_DIR / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # CORS
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
@@ -24,6 +33,12 @@ class Settings(BaseSettings):
     # Sentences shorter than this many characters are treated as noise
     # (captions, bylines, "Share this", etc.) and skipped.
     min_sentence_chars: int = 15
+
+    # Database (PostgreSQL). Leave empty to disable persistence entirely:
+    # the API still works, it just won't store articles or sessions.
+    # Accepts either "postgresql://" or "postgresql+psycopg://" — the async
+    # driver is applied automatically (see app.db.base).
+    database_url: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

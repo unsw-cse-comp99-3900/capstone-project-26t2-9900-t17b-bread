@@ -11,7 +11,9 @@ COMP9900 毕业设计项目 — **新闻叙事差异对比工具**（T17B BREAD�
 | 路径 | 说明 |
 |------|------|
 | `backend/` | FastAPI 后端 — 文章抓取、清洗、预处理、对比 API |
-| `backend/API.md` | **前端对接文档**（接口、请求/响应结构、示例）/ Frontend integration guide |
+| `backend/API中文.md` | **前端对接文档（中文）** |
+| `backend/APIenglish.md` | **Frontend integration guide (English)** |
+| `backend/DATABASE_INTEGRATION.md` | **数据库对接文档**（表结构、连接配置、联调步骤）/ Database integration guide |
 
 ### 后端（Sprint 1）
 
@@ -35,11 +37,11 @@ uvicorn app.main:app --reload
 | `POST` | `/api/fetch` | 抓取并清洗单篇文章 |
 | `POST` | `/api/compare` | 处理两篇文章，供双栏展示 |
 
-完整请求/响应格式、错误处理与前端示例见 **[backend/API.md](backend/API.md)**。
+完整请求/响应格式、错误处理与前端示例见 **[backend/API中文.md](backend/API中文.md)**。
 
 ### 前端对接
 
-前端开发请先阅读 `backend/API.md`。主接口为 `POST /api/compare`；默认已开启 CORS，允许 `http://localhost:3000` 与 `http://localhost:5173`。
+前端开发请先阅读 `backend/API中文.md`。主接口为 `POST /api/compare`；默认已开启 CORS，允许 `http://localhost:3000` 与 `http://localhost:5173`。
 
 ---
 
@@ -54,7 +56,8 @@ A browser-based tool that lets users submit two news article URLs about the same
 | Path | Description |
 |------|-------------|
 | `backend/` | FastAPI backend — article fetch, cleaning, preprocessing, comparison API |
-| `backend/API.md` | **Frontend integration guide** (endpoints, schemas, examples) |
+| `backend/APIenglish.md` | **Frontend integration guide** (endpoints, schemas, examples) |
+| `backend/DATABASE_INTEGRATION.md` | **Database integration guide** (schema, connection, verification) |
 
 ### Backend (Sprint 1)
 
@@ -78,8 +81,8 @@ uvicorn app.main:app --reload
 | `POST` | `/api/fetch` | Fetch and clean a single article |
 | `POST` | `/api/compare` | Process two articles for side-by-side display |
 
-For full request/response formats, error handling, and frontend examples, see **[backend/API.md](backend/API.md)**.
+For full request/response formats, error handling, and frontend examples, see **[backend/APIenglish.md](backend/APIenglish.md)**.
 
 ### Frontend integration
 
-Frontend developers should read `backend/API.md` before wiring URL submission and the side-by-side viewer. The main endpoint is `POST /api/compare`; CORS is enabled for `http://localhost:3000` and `http://localhost:5173` by default.
+Frontend developers should read `backend/APIenglish.md` before wiring URL submission and the side-by-side viewer. The main endpoint is `POST /api/compare`; CORS is enabled for `http://localhost:3000` and `http://localhost:5173` by default.

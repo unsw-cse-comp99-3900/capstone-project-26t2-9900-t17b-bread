@@ -7,6 +7,11 @@ httpx==0.28.1
 trafilatura==2.0.0
 python-dotenv==1.0.1
 
+# Database (PostgreSQL via async SQLAlchemy). psycopg is only loaded when a
+# DATABASE_URL is configured, so the backend still runs without a database.
+sqlalchemy[asyncio]==2.0.36
+psycopg[binary]==3.2.3
+
 # Dev / testing
 pytest==8.3.4
 pytest-asyncio==0.25.2
