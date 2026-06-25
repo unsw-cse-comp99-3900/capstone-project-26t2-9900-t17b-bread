@@ -1,0 +1,16 @@
+# Sprint 1 backend dependencies (article ingestion, cleaning, preprocessing)
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+httpx==0.28.1
+trafilatura==2.0.0
+python-dotenv==1.0.1
+
+# Dev / testing
+pytest==8.3.4
+pytest-asyncio==0.25.2
+
+# NOTE: Sprint 2 ML dependencies (SBERT embeddings, BM25 retrieval) are kept
+# in requirements-ml.txt so the Sprint 1 backend stays lightweight and avoids
+# pulling in torch until the comparison pipeline is implemented.
