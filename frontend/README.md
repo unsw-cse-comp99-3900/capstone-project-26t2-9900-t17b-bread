@@ -1,16 +1,77 @@
-# React + Vite
+# Narrative Diff Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + Vite frontend for the T17B BREAD news narrative comparison tool.
 
-Currently, two official plugins are available:
+## Requirements
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Node.js LTS
+- npm
+- A running FastAPI backend for live article fetching
+- Modern browser such as Chrome, Edge, Firefox or Safari
 
-## React Compiler
+Check Node and npm are available:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```powershell
+node --version
+npm --version
+```
 
-## Expanding the Oxlint configuration
+Install frontend dependencies once before running the app:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+```powershell
+npm install
+```
+
+## Run locally
+
+From this `frontend` directory:
+
+```powershell
+npm run dev
+```
+
+Open the local Vite URL shown in the terminal, usually:
+
+```text
+http://localhost:5173
+```
+
+## Backend connection
+
+The frontend calls the backend with a relative API path:
+
+```text
+/api/compare
+```
+
+During local development, Vite proxies `/api` requests to the FastAPI backend:
+
+```text
+http://localhost:8000
+```
+
+Start the backend from the project `backend` directory:
+
+```powershell
+uvicorn app.main:app --reload
+```
+
+## Current features
+
+- Two article URL inputs
+- URL format validation
+- Comparison focus selector
+- Live backend API integration
+- Side-by-side cleaned article display
+- Per-article backend error display
+- Loading state while comparing
+- Prepared Al Jazeera / ABC demo URLs
+- Offline demo copy fallback when the demo URLs are used and the backend is unavailable
+
+## Not implemented yet
+
+- Semantic sentence alignment
+- Colour-coded similarity/difference highlighting
+- Explanation panel
+- Summary generation
+- Database-backed comparison history

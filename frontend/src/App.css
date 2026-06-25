@@ -124,6 +124,14 @@ footer {
   background: #fffaf4;
 }
 
+.demo-button:disabled,
+.compare-button:disabled,
+input:disabled,
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
 .compare-form {
   padding: 26px;
   border: 1px solid var(--border-strong);
@@ -255,6 +263,11 @@ input[aria-invalid='true'] {
   transform: translateY(-1px);
 }
 
+.compare-button:disabled:hover {
+  background: var(--navy);
+  transform: none;
+}
+
 .compare-button:focus-visible {
   outline: 3px solid rgba(226, 112, 46, 0.45);
   outline-offset: 3px;
@@ -337,6 +350,10 @@ input[aria-invalid='true'] {
   background: rgba(255, 255, 255, 0.9);
 }
 
+.article-panel--error {
+  background: #fff4f2;
+}
+
 .article-panel--loaded h2 {
   max-width: 430px;
   font-family: Georgia, 'Times New Roman', serif;
@@ -369,6 +386,25 @@ input[aria-invalid='true'] {
 
 .article-copy p {
   margin: 0 0 18px;
+}
+
+.article-error-box {
+  margin-top: 22px;
+  padding: 15px;
+  border: 1px solid #edb4aa;
+  border-radius: 12px;
+  color: #8f2e22;
+  background: #fff;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.article-error-box p {
+  margin: 0 0 8px;
+}
+
+.article-error-box p:last-child {
+  margin-bottom: 0;
 }
 
 .article-placeholder {
