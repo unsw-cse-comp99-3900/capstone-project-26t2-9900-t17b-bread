@@ -63,6 +63,16 @@ function getErrorForArticle(apiErrors, side) {
   return apiErrors.find((error) => error.article_ref === side)
 }
 
+function clearFieldError(errors, fieldName) {
+  if (!errors[fieldName]) {
+    return errors
+  }
+
+  const nextErrors = { ...errors }
+  delete nextErrors[fieldName]
+  return nextErrors
+}
+
 function ArticlePanel({ article, error, label, side }) {
   if (article) {
     return (
@@ -150,6 +160,8 @@ function App() {
   const [articles, setArticles] = useState([])
   const [usingDemoCopy, setUsingDemoCopy] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const canCompare =
+    isValidHttpUrl(articleAUrl) && isValidHttpUrl(articleBUrl)
 
   function loadDemoArticles() {
     setArticleAUrl(demoArticles.urls.A)
@@ -169,6 +181,20 @@ function App() {
     setApiErrors([])
     setUsingDemoCopy(true)
     setStatusMessage(message)
+  }
+
+  function handleArticleAUrlChange(event) {
+    setArticleAUrl(event.target.value)
+    setFormErrors((currentErrors) =>
+      clearFieldError(currentErrors, 'articleA'),
+    )
+  }
+
+  function handleArticleBUrlChange(event) {
+    setArticleBUrl(event.target.value)
+    setFormErrors((currentErrors) =>
+      clearFieldError(currentErrors, 'articleB'),
+    )
   }
 
   async function handleSubmit(event) {
@@ -313,7 +339,7 @@ function App() {
                   id="article-a-url"
                   type="url"
                   value={articleAUrl}
-                  onChange={(event) => setArticleAUrl(event.target.value)}
+                  onChange={handleArticleAUrlChange}
                   placeholder="https://news-outlet.com/article"
                   aria-describedby={
                     formErrors.articleA ? 'article-a-error' : undefined
@@ -337,7 +363,7 @@ function App() {
                   id="article-b-url"
                   type="url"
                   value={articleBUrl}
-                  onChange={(event) => setArticleBUrl(event.target.value)}
+                  onChange={handleArticleBUrlChange}
                   placeholder="https://another-outlet.com/article"
                   aria-describedby={
                     formErrors.articleB ? 'article-b-error' : undefined
@@ -373,7 +399,7 @@ function App() {
               <button
                 className="compare-button"
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || !canCompare}
               >
                 {isLoading ? 'Comparing...' : 'Compare articles'}
                 <span aria-hidden="true">-&gt;</span>
