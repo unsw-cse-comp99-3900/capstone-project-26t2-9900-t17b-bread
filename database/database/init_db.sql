@@ -17,3 +17,11 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(session_token);
+
+CREATE TABLE IF NOT EXISTS article_embeddings (
+    id SERIAL PRIMARY KEY,
+    article_id INT REFERENCES articles(id) ON DELETE CASCADE,
+    embedding REAL[] NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_article_id ON article_embeddings(article_id);
