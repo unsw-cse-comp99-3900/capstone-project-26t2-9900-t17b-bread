@@ -17,6 +17,9 @@ from app.schemas.article import ProcessedArticle
 from app.services.errors import PipelineError
 from app.services.fetch_service import fetch_article
 from app.services.preprocessing_service import preprocess_article
+from typing import Any
+from app.services.paragraph_chunking_service import build_paragraph_chunks
+from app.services.embedding_service import get_embedding_service
 
 
 @dataclass
@@ -26,6 +29,8 @@ class ArticleResult:
     article_ref: str
     url: str | None
     article: ProcessedArticle | None = None
+    paragraph_chunks: list[dict[str, Any]] | None = None
+    chunk_embeddings: list[dict[str, Any]] | None = None
     error: PipelineError | None = None
 
     @property
@@ -39,7 +44,7 @@ async def process_article(
     *,
     settings: Settings | None = None,
 ) -> ArticleResult:
-    """Run fetch -> extract -> clean -> sentence-prep for one article.
+    """Run fetch -> extract -> clean -> sentence-prep -> chunking -> embedding for one article.
 
     Never raises: pipeline failures are captured in ``ArticleResult.error`` so
     one failing article cannot abort processing of the other.
@@ -48,7 +53,23 @@ async def process_article(
     try:
         raw = await fetch_article(raw_url, article_ref=article_ref, settings=settings)
         processed = preprocess_article(raw, article_ref, settings=settings)
-        return ArticleResult(article_ref=article_ref, url=raw.url, article=processed)
+
+        paragraph_chunks = build_paragraph_chunks(processed)
+
+        embedding_service = get_embedding_service()
+        chunk_embeddings = await asyncio.to_thread(
+            embedding_service.encode_paragraph_chunks,
+            paragraph_chunks,
+        )
+
+        return ArticleResult(
+            article_ref=article_ref,
+            url=raw.url,
+            article=processed,
+            paragraph_chunks=paragraph_chunks,
+            chunk_embeddings=chunk_embeddings,
+        )
+
     except PipelineError as exc:
         return ArticleResult(article_ref=article_ref, url=raw_url, error=exc)
 

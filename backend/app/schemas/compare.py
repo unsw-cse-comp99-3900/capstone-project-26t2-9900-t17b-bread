@@ -39,6 +39,47 @@ class StageError(BaseModel):
     article_ref: str | None = None
     url: str | None = None
 
+class ChunkDebug(BaseModel):
+    """Lightweight paragraph chunk information for frontend testing."""
+
+    chunk_id: str
+    article_ref: str
+    chunk_type: str = "paragraph"
+    chunk_index: int | None = None
+    paragraph_index: int | None = None
+    text_preview: str
+    word_count: int | None = None
+    sentence_ids: list[str] = Field(default_factory=list)
+    char_start: int | None = None
+    char_end: int | None = None
+
+
+class EmbeddingDebug(BaseModel):
+    """Lightweight SBERT embedding information for frontend testing.
+
+    The full embedding vector is not returned here because it is large and is
+    mainly used internally by the backend comparison logic.
+    """
+
+    chunk_id: str
+    article_ref: str
+    model_name: str | None = None
+    dimension: int | None = None
+    vector_length: int
+    vector_preview: list[float] = Field(default_factory=list)
+    ok: bool
+
+
+class ArticleNLPDebug(BaseModel):
+    """Frontend-facing debug summary for chunking and embedding."""
+
+    article_ref: str
+    chunk_count: int
+    embedding_count: int
+    embedding_ready: bool
+    chunks: list[ChunkDebug] = Field(default_factory=list)
+    embeddings: list[EmbeddingDebug] = Field(default_factory=list)
+
 
 class CompareResponse(BaseModel):
     """Sprint 1 response: both articles processed into comparison-ready form.
@@ -50,6 +91,15 @@ class CompareResponse(BaseModel):
     focus: ComparisonFocus
     articles: list[ProcessedArticle] = Field(default_factory=list)
     errors: list[StageError] = Field(default_factory=list)
+
+    nlp_debug: list[ArticleNLPDebug] = Field(
+        default_factory=list,
+        description=(
+            "Sprint 1 debug output for verifying paragraph chunking and "
+            "SBERT embedding generation. This does not return full vectors."
+        ),
+    )
+
     comparison: dict | None = Field(
         default=None,
         description="Reserved for Sprint 2 comparison results.",
