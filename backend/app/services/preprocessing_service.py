@@ -55,6 +55,7 @@ def preprocess_article(
     settings = settings or get_settings()
     normalized = normalize_text(raw.body_text)
     paragraphs = split_paragraphs(normalized)
+    paragraph_chunks = build_paragraph_chunks(article_ref, paragraphs)
 
     sentences: list[SentenceUnit] = []
     sentence_index = 0
@@ -97,4 +98,17 @@ def preprocess_article(
         source_domain=raw.source_domain,
         paragraphs=paragraphs,
         sentences=sentences,
+        paragraph_chunks=build_paragraph_chunks(article_ref, paragraphs)
     )
+
+def build_paragraph_chunks(article_ref: str, paragraphs: list[str]):
+    return [
+        {
+            "chunk_id": f"{article_ref}-p{i}",
+            "article_ref": article_ref,
+            "chunk_type": "paragraph",
+            "text": p,
+            "chunk_index": i,
+        }
+        for i, p in enumerate(paragraphs)
+    ]
