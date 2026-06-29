@@ -49,3 +49,4 @@ class ProcessedArticle(BaseModel):
     source_domain: str | None = None
     paragraphs: list[str] = Field(default_factory=list)
     sentences: list[SentenceUnit] = Field(default_factory=list)
+    paragraph_chunks: list[dict] = Field(default_factory=list)
