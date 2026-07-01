@@ -96,6 +96,7 @@ def preprocess_article(
         url=raw.url,
         title=raw.title,
         source_domain=raw.source_domain,
+        source_type=getattr(raw, "source_type", "url"),
         paragraphs=paragraphs,
         sentences=sentences,
         paragraph_chunks=build_paragraph_chunks(article_ref, paragraphs)

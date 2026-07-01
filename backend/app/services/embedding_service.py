@@ -5,55 +5,28 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from sentence_transformers import SentenceTransformer
-
-
 DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 class EmbeddingService:
-    """
-    SBERT-based embedding service for paragraph chunks.
-
-    Sprint 1 only supports paragraph chunk embeddings.
-    Extractive summary embeddings can be added in later sprints without
-    changing the core encode method.
-    """
+    """SBERT-based embedding service for paragraph chunks."""
 
     def __init__(self, model_name: str = DEFAULT_MODEL_NAME):
         self.model_name = model_name
-        self.model = SentenceTransformer(model_name)
+        self._model = None
+
+    @property
+    def model(self):
+        if self._model is None:
+            from sentence_transformers import SentenceTransformer
+
+            self._model = SentenceTransformer(self.model_name)
+        return self._model
 
     def encode_paragraph_chunks(
         self,
         chunks: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """
-        Convert paragraph chunks into SBERT embedding vectors.
-
-        Input:
-            [
-                {
-                    "chunk_id": "article_a-p0",
-                    "article_ref": "article_a",
-                    "chunk_type": "paragraph",
-                    "text": "paragraph text..."
-                }
-            ]
-
-        Output:
-            [
-                {
-                    "chunk_id": "article_a-p0",
-                    "article_ref": "article_a",
-                    "chunk_type": "paragraph",
-                    "text": "paragraph text...",
-                    "embedding": [...],
-                    "dimension": 384
-                }
-            ]
-        """
-
         valid_chunks: list[dict[str, Any]] = []
 
         for chunk in chunks:
@@ -102,7 +75,5 @@ class EmbeddingService:
 
 @lru_cache(maxsize=1)
 def get_embedding_service() -> EmbeddingService:
-    """
-    Load the SBERT model once and reuse it across backend calls.
-    """
+    """Load the SBERT model once and reuse it across backend calls."""
     return EmbeddingService()

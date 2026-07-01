@@ -2,8 +2,8 @@
 
 This document describes the HTTP endpoints exposed by the **T17B BREAD** backend for frontend (React) integration.
 
-- **Version:** Sprint 1
-- **Implemented:** Article fetch, cleaning, sentence segmentation, data for side-by-side display
+- **Version:** Sprint 1+
+- **Implemented:** URL fetch, PDF/Word upload, cleaning, sentence segmentation, English progress reporting, structured error codes, side-by-side display data
 - **Not yet implemented:** Semantic comparison, highlighting, explanations (`comparison` reserved for Sprint 2)
 - **Database:** Optional; when `DATABASE_URL` is set, `POST /api/compare` persists results and may return `session_token` (see `DATABASE_INTEGRATION.md`)
 
@@ -13,7 +13,9 @@ This document describes the HTTP endpoints exposed by the **T17B BREAD** backend
 |------|-------|
 | Local base URL | `http://localhost:8000` |
 | Interactive docs | `http://localhost:8000/docs` |
-| Content-Type | `application/json` |
+| JSON endpoints Content-Type | `application/json` |
+| Upload endpoints Content-Type | `multipart/form-data` |
+| Progress streaming | `text/event-stream` (SSE) |
 | CORS enabled | Default: `http://localhost:3000`, `http://localhost:5173` |
 
 Start the backend:
@@ -31,8 +33,14 @@ uvicorn app.main:app --reload
 |--------|------|---------|--------|
 | `GET` | `/health` | Application health check | 1 |
 | `GET` | `/health/db` | Database connectivity check | 1 |
-| `POST` | `/api/fetch` | Fetch and clean a single article (preview) | 1 |
-| `POST` | `/api/compare` | Process two articles; comparison-ready structure | 1 (comparison in Sprint 2) |
+| `POST` | `/api/fetch` | Fetch and clean a single URL article (preview) | 1 |
+| `POST` | `/api/fetch/stream` | Same as above with live English progress (SSE) | 1 |
+| `POST` | `/api/upload` | Upload PDF/Word and extract body text | 1 |
+| `POST` | `/api/upload/stream` | Same as above with live English progress (SSE) | 1 |
+| `POST` | `/api/compare` | Compare two URL articles | 1 |
+| `POST` | `/api/compare/stream` | Same as above with live English progress (SSE) | 1 |
+| `POST` | `/api/compare/files` | Compare two articles (URLs and/or uploaded files) | 1 |
+| `POST` | `/api/compare/files/stream` | Same as above with live English progress (SSE) | 1 |
 
 ### 3. `GET /health`
 
@@ -49,7 +57,7 @@ Check whether the backend is running.
 
 ### 4. `GET /health/db`
 
-Check whether a database is configured and reachable (for integration testing).
+Check whether a database is configured and reachable.
 
 **Response `200`:**
 
@@ -61,7 +69,7 @@ Check whether a database is configured and reachable (for integration testing).
 
 ### 5. `POST /api/fetch`
 
-Fetches one news article and returns cleaned title, source domain, and body. Use for single-article preview; use `/api/compare` for full comparison.
+Fetches one news article from a URL and returns cleaned title, source domain, and body.
 
 **Request body:**
 
@@ -82,41 +90,72 @@ Fetches one news article and returns cleaned title, source domain, and body. Use
   "url": "https://www.bbc.com/news/articles/xxxx",
   "title": "Budget passed by parliament",
   "source_domain": "www.bbc.com",
-  "body_text": "The government announced a sweeping new national budget..."
+  "body_text": "The government announced a sweeping new national budget...",
+  "source_type": "url",
+  "processing": {
+    "total_elapsed_seconds": 2.14,
+    "message": "Processing completed in 2.14 seconds.",
+    "steps": [
+      {
+        "step": "fetch",
+        "label": "Download finished for article fetch.",
+        "status": "completed",
+        "elapsed_seconds": 1.2,
+        "article_ref": "fetch"
+      }
+    ]
+  }
 }
 ```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `url` | string | Requested URL |
-| `title` | string \| null | Article title |
-| `source_domain` | string \| null | Source domain |
-| `body_text` | string | Cleaned body (nav, ads, footers removed) |
 
 **Error `422`:**
 
 ```json
 {
   "detail": {
-    "stage": "fetch",
-    "message": "Server returned HTTP 403 for the article.",
+    "stage": "extraction",
+    "code": "extraction_paywall",
+    "message": "This article appears to be behind a paywall or membership wall. Please upload a PDF/Word copy or use a publicly accessible link.",
     "article_ref": null,
     "url": "https://example.com/story"
   }
 }
 ```
 
-**Error stages:**
+### 6. `POST /api/upload`
 
-| `stage` | Meaning | Suggested UI message |
-|---------|---------|----------------------|
-| `validation` | Invalid URL format | Please enter a valid http/https URL |
-| `fetch` | Network failure (timeout, 403, 404, etc.) | Could not reach this article; try another URL |
-| `extraction` | Page loaded but no article body extracted | This page does not look like a news article |
+Upload a PDF (`.pdf`) or Word (`.docx`) document and extract readable article text.
 
-### 6. `POST /api/compare` (main endpoint)
+**Request:** `multipart/form-data`
 
-The frontend Compare action should call this endpoint. Both articles are processed concurrently; structured paragraphs and sentences are returned for side-by-side display.
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | file | Yes | `.pdf` or `.docx`; max 10MB |
+
+**Success `200`:**
+
+```json
+{
+  "article": {
+    "url": "upload://budget-report.docx",
+    "title": "Budget Report",
+    "source_domain": "upload",
+    "body_text": "The government announced...",
+    "source_type": "upload"
+  },
+  "processing": {
+    "total_elapsed_seconds": 0.85,
+    "message": "Processing completed in 0.85 seconds.",
+    "steps": []
+  }
+}
+```
+
+**Error `422`:** Same shape as `/api/fetch`; `stage` may be `upload`.
+
+### 7. `POST /api/compare` (URL main endpoint)
+
+Use this when **both articles are URLs**.
 
 **Request body:**
 
@@ -134,15 +173,7 @@ The frontend Compare action should call this endpoint. Both articles are process
 | `article_b_url` | string | Yes | URL for article B |
 | `focus` | string | No | Comparison focus; default `"general"` |
 
-**Allowed `focus` values:**
-
-| Value | Meaning |
-|-------|---------|
-| `general` | General comparison (default) |
-| `political` | Political framing |
-| `sentiment` | Sentiment |
-| `economic` | Economic emphasis |
-| `social` | Social implications |
+**Allowed `focus` values:** `general`, `political`, `sentiment`, `economic`, `social`
 
 > Sprint 1 only echoes `focus`; from Sprint 2 it will affect comparison weighting.
 
@@ -157,10 +188,8 @@ The frontend Compare action should call this endpoint. Both articles are process
       "url": "https://outlet-a.com/story",
       "title": "Budget passed",
       "source_domain": "outlet-a.com",
-      "paragraphs": [
-        "The government announced a new budget today. Critics said it favours the wealthy.",
-        "Officials defended the plan."
-      ],
+      "source_type": "url",
+      "paragraphs": ["The government announced a new budget today..."],
       "sentences": [
         {
           "id": "A-0",
@@ -171,18 +200,17 @@ The frontend Compare action should call this endpoint. Both articles are process
           "char_start": 0,
           "char_end": 44
         }
-      ]
-    },
-    {
-      "article_ref": "B",
-      "url": "https://outlet-b.com/story",
-      "title": "...",
-      "source_domain": "outlet-b.com",
-      "paragraphs": ["..."],
-      "sentences": []
+      ],
+      "paragraph_chunks": []
     }
   ],
   "errors": [],
+  "processing": {
+    "total_elapsed_seconds": 5.32,
+    "message": "Processing completed in 5.32 seconds.",
+    "steps": []
+  },
+  "nlp_debug": [],
   "comparison": null,
   "session_token": "a1b2c3d4e5f6789..."
 }
@@ -190,7 +218,7 @@ The frontend Compare action should call this endpoint. Both articles are process
 
 **Partial success `200` (one failed, one OK):**
 
-`/api/compare` does **not** return 4xx when only one article fails. Failures appear in `errors`; successful articles remain in `articles`.
+`/api/compare` does **not** return 4xx when only one article fails.
 
 ```json
 {
@@ -199,93 +227,258 @@ The frontend Compare action should call this endpoint. Both articles are process
     {
       "article_ref": "B",
       "url": "https://outlet-b.com/story",
-      "title": "...",
-      "source_domain": "outlet-b.com",
+      "source_type": "url",
       "paragraphs": ["..."],
       "sentences": []
     }
   ],
   "errors": [
     {
-      "stage": "validation",
-      "message": "URL must start with http:// or https://.",
+      "stage": "extraction",
+      "code": "extraction_paywall",
+      "message": "This article appears to be behind a paywall or membership wall...",
       "article_ref": "A",
-      "url": "not-a-valid-url"
+      "url": "https://outlet-a.com/story"
     }
   ],
+  "processing": {
+    "total_elapsed_seconds": 3.1,
+    "message": "Processing completed in 3.1 seconds.",
+    "steps": []
+  },
   "comparison": null,
   "session_token": null
 }
 ```
 
-**Response fields:**
+### 8. `POST /api/compare/files` (mixed URL + file compare)
 
-Top level:
+Use when **either article** comes from an uploaded PDF/Word file. Each side must provide **either a URL or a file**, not both.
+
+**Request:** `multipart/form-data`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `article_a_url` | string | No* | URL for article A |
+| `article_a_file` | file | No* | PDF/Word file for article A |
+| `article_b_url` | string | No* | URL for article B |
+| `article_b_file` | file | No* | PDF/Word file for article B |
+| `focus` | string | No | Comparison focus; default `general` |
+
+\* Each side (A/B) must supply a URL or file.
+
+**Example: file A + URL B**
+
+```javascript
+const form = new FormData();
+form.append("article_a_file", pdfFile);
+form.append("article_b_url", "https://www.bbc.com/news/articles/xxxx");
+form.append("focus", "general");
+
+const res = await fetch("http://localhost:8000/api/compare/files", {
+  method: "POST",
+  body: form,
+});
+```
+
+**Response shape** matches `POST /api/compare`. Uploaded articles have `source_type: "upload"` and `url` like `upload://filename.pdf`.
+
+### 9. Progress reporting (English)
+
+#### 9.1 `processing` field in responses
+
+All long-running endpoints return a `processing` summary when complete:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_elapsed_seconds` | number | Total elapsed time in seconds |
+| `message` | string | English summary, e.g. `"Processing completed in 5.32 seconds."` |
+| `steps[]` | array | Per-step English labels, status, and timing |
+
+Each item in `steps[]`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `step` | string | e.g. `fetch`, `extraction`, `preprocessing`, `embedding` |
+| `label` | string | English progress text (safe to show in UI) |
+| `status` | string | `pending` / `running` / `completed` / `failed` / `skipped` |
+| `elapsed_seconds` | number \| null | Step duration |
+| `article_ref` | string \| null | `"A"`, `"B"`, `"fetch"`, or `"upload"` |
+
+#### 9.2 SSE live progress (recommended for progress bars)
+
+These endpoints stream **Server-Sent Events** for real-time UI updates:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /api/fetch/stream` | Single URL fetch progress |
+| `POST /api/upload/stream` | Single file upload progress |
+| `POST /api/compare/stream` | Two-URL compare progress |
+| `POST /api/compare/files/stream` | Mixed URL/file compare progress |
+
+**Event format:**
+
+```
+event: progress
+data: {"percent": 35, "message": "Extracting main article text for article A...", "elapsed_seconds": 2.1, "step": "extraction", "article_ref": "A", "status": "running"}
+
+event: result
+data: { ...full JSON response... }
+```
+
+| Event | Description |
+|-------|-------------|
+| `progress` | Progress update; use `percent` (0–100) for the bar and `message` for status text |
+| `result` | Final payload; same shape as the non-stream endpoint |
+
+**Frontend SSE example (compare):**
+
+```javascript
+async function compareWithProgress(urlA, urlB, onProgress) {
+  const res = await fetch("http://localhost:8000/api/compare/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      article_a_url: urlA,
+      article_b_url: urlB,
+      focus: "general",
+    }),
+  });
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() || "";
+
+    for (const chunk of chunks) {
+      const lines = chunk.split("\n");
+      const eventLine = lines.find((l) => l.startsWith("event:"));
+      const dataLine = lines.find((l) => l.startsWith("data:"));
+      if (!eventLine || !dataLine) continue;
+
+      const event = eventLine.replace("event:", "").trim();
+      const data = JSON.parse(dataLine.replace("data:", "").trim());
+
+      if (event === "progress") onProgress(data);
+      if (event === "result") return data;
+    }
+  }
+}
+```
+
+### 10. Error code reference
+
+All errors include `stage`, `code`, and `message` (English). Branch on **`code`** in the frontend.
+
+#### 10.1 Validation (`stage: validation`)
+
+| `code` | Meaning | Suggested UI |
+|--------|---------|--------------|
+| `url_missing` | URL is empty | Please enter an article URL |
+| `url_invalid_scheme` | Not http/https | URL must start with http:// or https:// |
+| `url_missing_host` | Missing host | Please enter a complete URL |
+| `input_missing` | Neither URL nor file provided | Provide a URL or upload PDF/Word |
+
+#### 10.2 Network (`stage: fetch`)
+
+| `code` | Meaning | Suggested UI |
+|--------|---------|--------------|
+| `fetch_timeout` | Download timed out | Site is slow; try another link |
+| `fetch_connection_failed` | Cannot connect | Check the URL and network |
+| `fetch_http_401` | HTTP 401 | This article requires sign-in |
+| `fetch_http_403` | HTTP 403 | Access forbidden (possible bot blocking) |
+| `fetch_http_404` | HTTP 404 | Page not found |
+| `fetch_http_error` | Other HTTP error | Could not download the page |
+| `fetch_page_too_large` | Response too large | Use a direct article link |
+
+#### 10.3 Extraction (`stage: extraction`)
+
+| `code` | Meaning | Suggested UI |
+|--------|---------|--------------|
+| `extraction_paywall` | **Paywall / membership wall** | Upload PDF/Word or use a public link |
+| `extraction_login_required` | **Login required** | Sign in and export PDF/Word, then upload |
+| `extraction_not_news_page` | Not an article page | Use an article detail URL |
+| `extraction_js_rendered` | JS-rendered content | Upload PDF/Word instead |
+| `extraction_empty` | No readable body | Page does not look like a news article |
+
+#### 10.4 Upload (`stage: upload`)
+
+| `code` | Meaning | Suggested UI |
+|--------|---------|--------------|
+| `upload_unsupported_type` | Unsupported file type | Only .pdf and .docx are accepted |
+| `upload_file_too_large` | File too large | Use a file under 10MB |
+| `upload_parse_failed` | Parse failed | File may be corrupted or password-protected |
+| `upload_empty_document` | No readable text | Check the document contents |
+
+### 11. Response field reference
+
+Top level (compare):
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `focus` | string | Requested comparison focus |
 | `articles` | array | Successfully processed articles (0–2) |
 | `errors` | array | Per-article errors (0–2) |
-| `comparison` | object \| null | Sprint 2 comparison results; currently always `null` |
-| `session_token` | string \| null | Returned when persistence succeeds; `null` if DB disabled or write failed |
+| `processing` | object | English timing and step summary |
+| `nlp_debug` | array | SBERT chunk/embedding debug info |
+| `comparison` | object \| null | Sprint 2 results; currently always `null` |
+| `session_token` | string \| null | Returned when persistence succeeds |
 
 Each item in `articles[]`:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `article_ref` | string | `"A"` or `"B"` for left/right column |
-| `url` | string | Article URL |
-| `title` | string \| null | Title |
-| `source_domain` | string \| null | Source domain |
-| `paragraphs` | string[] | Body split into paragraphs |
-| `sentences` | object[] | Sentence-level structure |
-
-Each item in `sentences[]`:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Stable id, e.g. `"A-0"`; highlight anchor in Sprint 2 |
 | `article_ref` | string | `"A"` or `"B"` |
-| `text` | string | Sentence text |
-| `paragraph_index` | number | Paragraph index (0-based) |
-| `sentence_index` | number | Global sentence index (0-based) |
-| `char_start` | number | Start offset in cleaned body |
-| `char_end` | number | End offset in cleaned body |
+| `url` | string | Article URL or `upload://filename` |
+| `source_type` | string | `"url"` or `"upload"` |
+| `title` | string \| null | Title |
+| `source_domain` | string \| null | Source domain; `"upload"` for files |
+| `paragraphs` | string[] | Paragraph list |
+| `sentences` | object[] | Sentence-level structure |
 
 Each item in `errors[]`:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `stage` | string | `validation` / `fetch` / `extraction` |
-| `message` | string | Human-readable message |
-| `article_ref` | string \| null | Failed article ref |
-| `url` | string \| null | URL that failed |
+| `stage` | string | Failure stage |
+| `code` | string | Machine-readable code (see section 10) |
+| `message` | string | English human-readable message |
+| `article_ref` | string \| null | `"A"` or `"B"` |
+| `url` | string \| null | Failed URL or upload path |
 
-### 7. Frontend component mapping
+### 12. Frontend component mapping
 
 | Frontend component | API / fields |
 |--------------------|--------------|
-| URL Input Component | `POST /api/compare` → `article_a_url`, `article_b_url` |
-| Comparison Focus Selector | `focus` (affects results from Sprint 2) |
-| Article Viewer (Side-by-Side) | `articles` where `article_ref === "A"` / `"B"`; body from `paragraphs` or `sentences` |
-| Colour-Coded Difference Renderer | Sprint 2: `comparison` + `sentences[].id` for highlights |
-| Similarity Rationale Panel | Sprint 2: explanations in `comparison` |
+| URL Input Component | `POST /api/compare` or `/api/compare/files` |
+| File Upload Component | `POST /api/upload` (preview) or `/api/compare/files` (compare) |
+| Progress Bar | `/stream` endpoints → `progress` events, or `processing` in response |
+| Error Banner | `errors[].code` + `errors[].message` |
+| Comparison Focus Selector | `focus` |
+| Article Viewer (Side-by-Side) | `articles` where `article_ref === "A"` / `"B"` |
+| Paywall Hint | `code === "extraction_paywall"` or `"extraction_login_required"` → prompt PDF/Word upload |
 
-**Recommended render flow (Sprint 1):**
+**Recommended render flow:**
 
 ```text
-1. User submits two URLs
-2. POST /api/compare
-3. If errors.length > 0 → show errors by article_ref; still render the other article
-4. article_ref === "A" → left column
-5. article_ref === "B" → right column
-6. comparison === null → no highlights or explanations yet (Sprint 2)
+1. User picks URL or PDF/Word for each article
+2. Any file involved → POST /api/compare/files (or /files/stream for progress bar)
+   URLs only    → POST /api/compare (or /stream)
+3. Handle errors[] by code with distinct UI messages
+4. On paywall/login → prompt PDF/Word upload
+5. article_ref === "A" → left column; article_ref === "B" → right column
 ```
 
-### 8. Frontend examples
+### 13. Frontend examples
 
-**Using `fetch`:**
+**URL-only compare:**
 
 ```javascript
 const API_BASE = "http://localhost:8000";
@@ -294,60 +487,50 @@ async function compareArticles(urlA, urlB, focus = "general") {
   const res = await fetch(`${API_BASE}/api/compare`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      article_a_url: urlA,
-      article_b_url: urlB,
-      focus,
-    }),
+    body: JSON.stringify({ article_a_url: urlA, article_b_url: urlB, focus }),
   });
-
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-
   return res.json();
 }
+```
 
-const data = await compareArticles(urlA, urlB, "political");
-const articleA = data.articles.find((a) => a.article_ref === "A");
-const articleB = data.articles.find((a) => a.article_ref === "B");
+**Mixed file + URL compare:**
 
-if (data.errors.length > 0) {
-  data.errors.forEach((err) => {
-    console.warn(`Article ${err.article_ref} failed at ${err.stage}:`, err.message);
+```javascript
+async function compareMixed(fileA, urlB) {
+  const form = new FormData();
+  form.append("article_a_file", fileA);
+  form.append("article_b_url", urlB);
+  form.append("focus", "general");
+
+  const res = await fetch(`${API_BASE}/api/compare/files`, {
+    method: "POST",
+    body: form,
   });
+  return res.json();
 }
 ```
 
-**Using axios:**
+**Render errors by code:**
 
 ```javascript
-import axios from "axios";
+const PAYWALL_CODES = new Set([
+  "extraction_paywall",
+  "extraction_login_required",
+]);
 
-const api = axios.create({
-  baseURL: "http://localhost:8000",
-  headers: { "Content-Type": "application/json" },
-});
-
-const { data } = await api.post("/api/compare", {
-  article_a_url: urlA,
-  article_b_url: urlB,
-  focus: "general",
-});
+function renderError(err) {
+  if (PAYWALL_CODES.has(err.code)) {
+    return "This article requires membership or sign-in. Please upload a PDF or Word file.";
+  }
+  return err.message;
+}
 ```
 
-**Single-article preview:**
+### 14. Client-side validation
 
-```javascript
-const { data } = await api.post("/api/fetch", {
-  url: "https://www.bbc.com/news/articles/xxxx",
-});
-// data.title, data.source_domain, data.body_text
-```
-
-### 9. Client-side validation
-
-Validate URLs before calling the backend (aligned with backend PROJ-1):
+- URL mode: enable Compare only when both URLs are valid
+- File mode: allow only `.pdf` and `.docx`, max 10MB per file
+- Per article: URL **or** file, never both
 
 ```javascript
 function isValidHttpUrl(value) {
@@ -358,12 +541,14 @@ function isValidHttpUrl(value) {
     return false;
   }
 }
+
+function isAllowedUpload(file) {
+  const name = file.name.toLowerCase();
+  return name.endsWith(".pdf") || name.endsWith(".docx");
+}
 ```
 
-- Enable Compare only when both URLs are valid (PROJ-1 AC 1.2)
-- Show inline validation errors without waiting for the API
-
-### 10. Sprint 2: `comparison` field (draft)
+### 15. Sprint 2: `comparison` field (draft)
 
 `comparison` is currently `null`. Expected shape after Sprint 2:
 
@@ -379,46 +564,34 @@ function isValidHttpUrl(value) {
         "explanation": "Both sentences describe the same budget announcement."
       }
     ],
-    "unique_a": ["A-5"],
-    "unique_b": ["B-7"],
-    "summary": {
-      "similarities": ["..."],
-      "differences": ["..."],
-      "unique_to_a": ["..."],
-      "unique_to_b": ["..."]
-    }
+    "summary": { "similarities": ["..."], "differences": ["..."] }
   }
 }
 ```
 
-| `label` | Meaning | Suggested colour |
-|---------|---------|------------------|
-| `aligned` | Semantically aligned | Green |
-| `partially_aligned` | Partially aligned | Yellow |
-| `divergent` | Divergent | Red |
-
-> Draft only; will be updated when Sprint 2 is finalised. Guard with `comparison === null` for now.
-
-### 11. FAQ
+### 16. FAQ
 
 **Q: Why does `/api/compare` return 200 when `errors` is non-empty?**  
-A: Partial success by design — one failed article does not block the other; handle both `articles` and `errors`.
+A: Partial success by design — one failed article does not block the other.
 
-**Q: Why do some sites return `stage: "fetch"`?**  
-A: Some publishers block bots (403) or require login; this is expected.
+**Q: What should we do when a site has a paywall?**  
+A: The backend returns `code: "extraction_paywall"` or `"extraction_login_required"`. Prompt the user to upload PDF/Word via `POST /api/compare/files`.
+
+**Q: Which endpoint should power the progress bar?**  
+A: Use the `/stream` variants and listen for `progress` events (`percent`, `message` in English).
+
+**Q: Is `.doc` supported?**  
+A: Only `.docx` is supported, not legacy `.doc`.
 
 **Q: What if the frontend runs on a different port?**  
 A: Set in `backend/.env`: `CORS_ORIGINS=http://localhost:YOUR_PORT`
 
-**Q: How do I check if the backend is up?**  
-A: Call `GET /health` or open `http://localhost:8000/docs`.
-
-**Q: What is `session_token`?**  
-A: A session identifier returned when database persistence succeeds; `null` when the database is disabled or the write failed. Frontend can ignore it in Sprint 1.
-
-### 12. Changelog
+### 17. Changelog
 
 | Date | Version | Notes |
 |------|---------|-------|
 | 2026-06-23 | Sprint 1 | Initial: fetch, compare, health |
-| 2026-06-25 | Sprint 1 | Split ZH/EN sections; added `/health/db`, `session_token` |
+| 2026-06-25 | Sprint 1 | Split ZH/EN docs; added `/health/db`, `session_token` |
+| 2026-06-29 | Sprint 1+ | PDF/Word upload, SSE English progress, structured error `code` |
+
+---

@@ -7,6 +7,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 from app.schemas.article import ProcessedArticle
+from app.schemas.progress import ProcessingSummary
 
 
 class ComparisonFocus(str, Enum):
@@ -35,6 +36,7 @@ class StageError(BaseModel):
     """A structured per-article error (PROJ-2 AC 2.5, PROJ-3 AC 3.3)."""
 
     stage: str
+    code: str
     message: str
     article_ref: str | None = None
     url: str | None = None
@@ -91,6 +93,10 @@ class CompareResponse(BaseModel):
     focus: ComparisonFocus
     articles: list[ProcessedArticle] = Field(default_factory=list)
     errors: list[StageError] = Field(default_factory=list)
+    processing: ProcessingSummary | None = Field(
+        default=None,
+        description="English timing/progress summary for the frontend progress UI.",
+    )
 
     nlp_debug: list[ArticleNLPDebug] = Field(
         default_factory=list,

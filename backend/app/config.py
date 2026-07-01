@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # (captions, bylines, "Share this", etc.) and skipped.
     min_sentence_chars: int = 15
 
+    # Uploaded documents (PDF / Word)
+    upload_max_bytes: int = 10_000_000
+
     # Database (PostgreSQL). Leave empty to disable persistence entirely:
     # the API still works, it just won't store articles or sessions.
     # Accepts either "postgresql://" or "postgresql+psycopg://" — the async
