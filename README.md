@@ -59,12 +59,12 @@ A browser-based tool that lets users submit two news article URLs about the same
 |------|-------------|
 | `backend/` | FastAPI backend: article fetch, cleaning, preprocessing, comparison API |
 | `backend/APIEnglish.md` | **Frontend integration guide** (endpoints, schemas, examples) |
-| `frontend/` | React + Vite frontend: URL inputs, comparison form, side-by-side article viewer |
+| `frontend/` | React + Vite frontend: URL/file inputs, comparison form, highlighted article viewer |
 | `frontend/README.md` | Frontend setup, local run instructions, backend proxy, and feature notes |
 | `database/` | PostgreSQL initialization script and database notes |
 | `backend/DATABASE_INTEGRATION.md` | **Database integration guide** (schema, connection, verification) |
 
-### Backend (Sprint 1)
+### Backend
 
 ```powershell
 cd backend
@@ -84,13 +84,14 @@ uvicorn app.main:app --reload
 |--------|------|---------|
 | `GET` | `/health` | Health check |
 | `POST` | `/api/fetch` | Fetch and clean a single article |
-| `POST` | `/api/compare` | Process two articles for side-by-side display |
+| `POST` | `/api/compare/stream` | Compare two URL articles with live progress |
+| `POST` | `/api/compare/files/stream` | Compare URL and/or PDF/Word article inputs with live progress |
 
 For full request/response formats, error handling, and frontend examples, see **[backend/APIenglish.md](backend/APIenglish.md)**.
 
 ### Frontend
 
-The frontend is a React + Vite app for submitting two article URLs and rendering cleaned backend output side by side.
+The frontend is a React + Vite app for comparing two news reports from URLs or uploaded PDF/Word documents, then rendering matched evidence, highlights, explanations, and filters.
 
 #### Requirements
 
@@ -129,10 +130,11 @@ http://localhost:5173
 
 #### Backend connection
 
-The frontend calls the backend with a relative API path:
+The frontend calls the backend with relative API paths:
 
 ```text
-/api/compare
+/api/compare/stream
+/api/compare/files/stream
 ```
 
 During local development, Vite proxies `/api` requests to the FastAPI backend:
@@ -151,22 +153,27 @@ CORS is enabled for `http://localhost:3000` and `http://localhost:5173` by defau
 
 #### Current features
 
-- Two article URL inputs
+- Two article inputs with URL or PDF/Word upload mode
 - URL format validation
+- PDF/Word file validation
 - Comparison focus selector
-- Live backend API integration
-- Side-by-side cleaned article display
+- Live backend API integration through streaming compare endpoints
+- Progress bar for long-running article processing
+- Side-by-side cleaned article display on desktop
+- Mobile Article A / Article B tab view on narrow screens
 - Per-article backend error display
-- Loading state while comparing
+- User-friendly error messages for invalid links, blocked sites, paywalls, login-required pages, and upload problems
+- Colour-coded comparison highlights for aligned, partially aligned, and divergent matches
+- Highlight legend and relationship filters
+- Click-to-inspect explanation panel for matched evidence
 - Prepared Al Jazeera / ABC demo URLs
 - Offline demo copy fallback when the demo URLs are used and the backend is unavailable
 
 #### Not implemented yet
 
-- Semantic sentence alignment
-- Colour-coded similarity/difference highlighting
-- Explanation panel
+- Backend-generated semantic sentence alignment
+- Backend-generated comparison explanations
 - Summary generation
 - Database-backed comparison history
 
-Frontend developers should read `backend/APIEnglish.md` before wiring URL submission and the side-by-side viewer. The main endpoint is `POST /api/compare`; CORS is enabled for `http://localhost:3000` and `http://localhost:5173` by default.
+Frontend developers should read `backend/APIEnglish.md` before changing API integration. URL-only comparisons use `POST /api/compare/stream`; mixed URL/file comparisons use `POST /api/compare/files/stream`. CORS is enabled for `http://localhost:3000` and `http://localhost:5173` by default.
