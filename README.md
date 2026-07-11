@@ -78,6 +78,41 @@ uvicorn app.main:app --reload
 - Swagger docs: <http://localhost:8000/docs>
 - Health check: <http://localhost:8000/health>
 
+### Backend (Sprint 2)
+
+Sprint 2 extends the backend with the **article comparison module**, which consumes the embeddings produced by the Sprint 1 NLP pipeline and generates structured comparison results.
+
+This module does **not** modify the NLP pipeline. Instead, it performs downstream semantic comparison using the cleaned paragraph chunks and embedding vectors already produced by Sprint 1.
+
+#### New comparison capabilities
+
+- **Paragraph‑level alignment**  
+  For each paragraph in Article A, the backend selects the best semantic match in Article B using cosine similarity.
+
+- **Relationship classification**  
+  Each alignment is labelled using fixed thresholds:  
+  - `aligned` (≥ 0.80)  
+  - `partially_aligned` (≥ 0.50)  
+  - `divergent` (< 0.50)
+
+- **Human‑readable explanations**  
+  Each relationship receives a short explanation describing why the match was classified that way.
+
+#### Updated endpoint
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/compare` | Full article comparison (alignments, relationships, explanations) |
+
+The comparison logic is implemented in:
+
+- `app/services/comparison_service.py`  
+- `app/services/compare_helpers.py`  
+- `app/api/routes/compare.py`  
+- `app/schemas/compare.py`
+
+This completes the backend requirements for Sprint 2.
+
 #### API overview
 
 | Method | Path | Purpose |

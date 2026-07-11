@@ -548,25 +548,28 @@ function isAllowedUpload(file) {
 }
 ```
 
-### 15. Sprint 2: `comparison` field (draft)
+### 15. Sprint 2 – Semantic Comparison Output
 
-`comparison` is currently `null`. Expected shape after Sprint 2:
+Starting from Sprint 2, the backend now generates **semantic comparison results** using the paragraph embeddings produced by the NLP pipeline.
+
+This affects the following endpoints:
+
+- `POST /api/compare`
+- `POST /api/compare/stream`
+- `POST /api/compare/files`
+- `POST /api/compare/files/stream`
+
+When **both articles are successfully processed**, the backend returns:
 
 ```json
 {
   "comparison": {
-    "matches": [
-      {
-        "sentence_a_id": "A-0",
-        "sentence_b_id": "B-1",
-        "label": "aligned",
-        "score": 0.87,
-        "explanation": "Both sentences describe the same budget announcement."
-      }
-    ],
-    "summary": { "similarities": ["..."], "differences": ["..."] }
+    "alignments": [...],
+    "relationships": [...],
+    "explanations": [...]
   }
 }
+
 ```
 
 ### 16. FAQ

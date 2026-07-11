@@ -91,6 +91,17 @@ def build_compare_response(
     errors: list[StageError] = []
     nlp_debug: list[ArticleNLPDebug] = []
 
+    #sprint 2
+    comparison = None
+
+    if len(results) == 2 and all(r.ok for r in results):
+        article_a = next(r for r in results if r.article_ref == "A")
+        article_b = next(r for r in results if r.article_ref == "B")
+
+        from app.services.comparison_service import compare_articles
+        comparison = compare_articles(article_a, article_b)
+
+
     for result in results:
         if result.ok and result.article is not None:
             articles.append(result.article)
@@ -108,6 +119,7 @@ def build_compare_response(
         errors=errors,
         processing=processing,
         nlp_debug=nlp_debug,
+        comparison=comparison,
         session_token=session_token,
     )
 
