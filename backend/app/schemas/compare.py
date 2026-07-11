@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -117,3 +118,20 @@ class CompareResponse(BaseModel):
             "persistence is disabled or the database is unavailable."
         ),
     )
+
+#sprint 2 
+
+class Alignment(BaseModel):
+    a_index: int
+    b_index: int
+    similarity: float
+
+class Relationship(BaseModel):
+    a_index: int
+    b_index: int
+    label: Literal["aligned", "partially_aligned", "divergent"]
+
+class Explanation(BaseModel):
+    a_index: int
+    b_index: int
+    text: str
