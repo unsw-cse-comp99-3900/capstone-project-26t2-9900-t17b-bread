@@ -25,8 +25,19 @@ class ProgressStep:
     def elapsed_seconds(self) -> float | None:
         if self.started_at is None:
             return None
+
         end = self.completed_at if self.completed_at is not None else time.perf_counter()
         return round(end - self.started_at, 2)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert one progress step into frontend-friendly data."""
+        return {
+            "step": self.step,
+            "label": self.label,
+            "status": self.status,
+            "elapsed_seconds": self.elapsed_seconds,
+            "article_ref": self.article_ref,
+        }
 
 
 @dataclass
@@ -41,6 +52,7 @@ class ProgressTracker:
     _callback: ProgressCallback | None = field(default=None, repr=False)
 
     def bind(self, callback: ProgressCallback | None) -> ProgressTracker:
+        """Attach a callback used by SSE streaming."""
         self._callback = callback
         return self
 
@@ -57,29 +69,33 @@ class ProgressTracker:
         article_ref: str | None = None,
         status: StepStatus | None = None,
     ) -> None:
+        """
+        Update progress state and optionally emit an event to the frontend.
+
+        This tracker is generic. The pipeline decides which step names to emit,
+        such as preprocessing, embedding, cosine_similarity, bm25_scoring,
+        hybrid_scoring, cross_mapping, or relationship_classification.
+        """
+
         if percent is not None:
-            self.percent = max(0, min(100, percent))
+            self.percent = self._clamp_percent(percent)
+
         if message is not None:
             self.message = message
 
         if step is not None:
-            existing = next((s for s in self.steps if s.step == step and s.article_ref == article_ref), None)
-            if existing is None:
-                existing = ProgressStep(step=step, label=message or step, article_ref=article_ref)
-                self.steps.append(existing)
-            if message is not None:
-                existing.label = message
-            if status == "running" and existing.started_at is None:
-                existing.started_at = time.perf_counter()
-            if status in {"completed", "failed", "skipped"}:
-                existing.completed_at = time.perf_counter()
-            if status is not None:
-                existing.status = status
+            self._update_step(
+                step=step,
+                label=message or step,
+                article_ref=article_ref,
+                status=status,
+            )
 
         if self._callback is None:
             return
 
         payload = {
+            "name": self.name,
             "percent": self.percent,
             "message": self.message,
             "elapsed_seconds": self.elapsed_seconds,
@@ -87,24 +103,75 @@ class ProgressTracker:
             "article_ref": article_ref,
             "status": status,
         }
+
         result = self._callback(payload)
+
         if result is not None:
             await result
 
     def to_summary(self, *, final_message: str | None = None) -> dict[str, Any]:
+        """
+        Convert progress tracking data into a response summary.
+
+        This output should match the frontend progress summary structure.
+        """
         total = self.elapsed_seconds
-        message = final_message or f"Processing completed in {total} seconds."
+        message = final_message or self.message or f"Processing completed in {total} seconds."
+
         return {
             "total_elapsed_seconds": total,
             "message": message,
-            "steps": [
-                {
-                    "step": step.step,
-                    "label": step.label,
-                    "status": step.status,
-                    "elapsed_seconds": step.elapsed_seconds,
-                    "article_ref": step.article_ref,
-                }
-                for step in self.steps
-            ],
+            "steps": [step.to_dict() for step in self.steps],
         }
+
+    def _update_step(
+        self,
+        *,
+        step: str,
+        label: str,
+        article_ref: str | None,
+        status: StepStatus | None,
+    ) -> None:
+        """Create or update a tracked processing step."""
+
+        existing = self._find_step(step=step, article_ref=article_ref)
+
+        if existing is None:
+            existing = ProgressStep(
+                step=step,
+                label=label,
+                article_ref=article_ref,
+            )
+            self.steps.append(existing)
+
+        existing.label = label
+
+        if status == "running" and existing.started_at is None:
+            existing.started_at = time.perf_counter()
+
+        if status in {"completed", "failed", "skipped"}:
+            existing.completed_at = time.perf_counter()
+
+        if status is not None:
+            existing.status = status
+
+    def _find_step(
+        self,
+        *,
+        step: str,
+        article_ref: str | None,
+    ) -> ProgressStep | None:
+        """Find an existing step by step name and article reference."""
+
+        return next(
+            (
+                item
+                for item in self.steps
+                if item.step == step and item.article_ref == article_ref
+            ),
+            None,
+        )
+
+    def _clamp_percent(self, percent: int) -> int:
+        """Keep progress percentage inside 0-100."""
+        return max(0, min(100, percent))
