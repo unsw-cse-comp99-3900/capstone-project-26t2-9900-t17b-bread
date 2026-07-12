@@ -210,12 +210,10 @@ def _build_frontend_matches(pair_result: PairPipelineResult) -> list[dict[str, A
 
 def _build_comparison_payload(pair_result: PairPipelineResult) -> dict[str, Any] | None:
     """
-    Convert internal comparison result into response payload.
+    Convert internal comparison result into final frontend comparison output.
 
-    Includes:
-    - matches: frontend-friendly chunk-level matches
-    - cross_mappings: backend final mappings
-    - relationships: backend relationship classification output
+    This only returns the final comparison result.
+    It does not return debug scores or intermediate pipeline outputs.
     """
 
     if pair_result.comparison is None:
@@ -227,20 +225,9 @@ def _build_comparison_payload(pair_result: PairPipelineResult) -> dict[str, Any]
     return {
         "focus": comparison.focus,
         "summary": {
-            "cosine_pair_count": len(comparison.cosine_pair_scores),
-            "bm25_pair_count": len(comparison.bm25_pair_scores),
-            "hybrid_pair_count": len(comparison.hybrid_pair_scores),
-            "cross_mapping_count": len(comparison.cross_mappings),
-            "relationship_count": len(comparison.relationships),
             "match_count": len(matches),
         },
         "matches": matches,
-        "cross_mappings": comparison.cross_mappings,
-        "relationships": comparison.relationships,
-        "debug": {
-            "top_hybrid_pair_scores": comparison.hybrid_pair_scores[:50],
-            "top_cross_mappings": comparison.cross_mappings[:50],
-        },
     }
 
 
@@ -267,17 +254,10 @@ def _build_compare_response(
         if (error_payload := _build_stage_error(result)) is not None
     ]
 
-    nlp_debug = [
-        debug_payload
-        for result in article_results
-        if (debug_payload := _build_nlp_debug(result)) is not None
-    ]
-
     response_data: dict[str, Any] = {
         "focus": focus,
         "articles": articles,
         "errors": errors,
-        "nlp_debug": nlp_debug,
         "comparison": _build_comparison_payload(pair_result),
         "session_token": session_token,
     }
