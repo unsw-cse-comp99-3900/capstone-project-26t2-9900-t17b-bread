@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -39,161 +39,71 @@ class StageError(BaseModel):
     url: str | None = None
 
 
-class ChunkDebug(BaseModel):
-    """Lightweight paragraph chunk information for frontend testing."""
-
-    chunk_id: str
-    article_ref: str
-    chunk_type: str = "paragraph"
-    chunk_index: int | None = None
-    paragraph_index: int | None = None
-    text_preview: str
-    word_count: int | None = None
-    sentence_ids: list[str] = Field(default_factory=list)
-    char_start: int | None = None
-    char_end: int | None = None
-
-
-class EmbeddingDebug(BaseModel):
-    """Lightweight SBERT embedding information for frontend testing."""
-
-    chunk_id: str
-    article_ref: str
-    model_name: str | None = None
-    dimension: int | None = None
-    vector_length: int
-    vector_preview: list[float] = Field(default_factory=list)
-    ok: bool
-
-
-class ArticleNLPDebug(BaseModel):
-    """Frontend-facing debug summary for chunking and embedding."""
-
-    article_ref: str
-    chunk_count: int
-    embedding_count: int
-    embedding_ready: bool
-    chunks: list[ChunkDebug] = Field(default_factory=list)
-    embeddings: list[EmbeddingDebug] = Field(default_factory=list)
-
-
 # ---------------------------------------------------------------------
-# Sprint 2 comparison schemas
+# Final comparison result schemas
 # ---------------------------------------------------------------------
 
 
 class ComparisonSummary(BaseModel):
-    """Count summary for Sprint 2 comparison outputs."""
+    """Summary of final comparison output."""
 
-    cosine_pair_count: int = 0
-    bm25_pair_count: int = 0
-    hybrid_pair_count: int = 0
-    cross_mapping_count: int = 0
-    relationship_count: int = 0
+    match_count: int = 0
 
 
-class CrossMappingItem(BaseModel):
-    """Final A-B paragraph mapping selected after hybrid scoring."""
+class ComparisonMatch(BaseModel):
+    """
+    Final chunk-level comparison match returned to the frontend.
 
-    a_chunk_id: str
-    b_chunk_id: str
+    The backend compares paragraph chunks, so the frontend should use
+    a_paragraph_index and b_paragraph_index for paragraph-level highlighting.
+    """
 
-    a_chunk_index: int | None = None
-    b_chunk_index: int | None = None
-    a_paragraph_index: int | None = None
-    b_paragraph_index: int | None = None
-    a_article_ref: str | None = None
-    b_article_ref: str | None = None
-
-    cosine_score: float = 0.0
-    bm25_score: float = 0.0
-    bm25_raw_score: float = 0.0
-
-    base_hybrid_score: float = 0.0
-    hybrid_score: float = 0.0
-
-    focus: str = "general"
-    pair_focus_relevance: float = 0.0
-    scale_factor: float = 1.0
-
-    context_support: float = 0.0
-    mapping_score: float = 0.0
-
-
-class RelationshipItem(BaseModel):
-    """Relationship classification for a mapped A-B paragraph pair."""
+    id: str
 
     a_chunk_id: str
     b_chunk_id: str
 
-    a_chunk_index: int | None = None
-    b_chunk_index: int | None = None
     a_paragraph_index: int | None = None
     b_paragraph_index: int | None = None
-    a_article_ref: str | None = None
-    b_article_ref: str | None = None
+    a_chunk_index: int | None = None
+    b_chunk_index: int | None = None
 
     label: Literal["aligned", "partially_aligned", "divergent"]
-    confidence: Literal["high", "medium", "low"] | str = "medium"
+    score: float = 0.0
+
+    confidence: str | None = None
     reason_code: str | None = None
-
-    cosine_score: float = 0.0
-    bm25_score: float = 0.0
-    base_hybrid_score: float = 0.0
-    hybrid_score: float = 0.0
-    mapping_score: float = 0.0
-    context_support: float = 0.0
-
-    focus: str = "general"
-    pair_focus_relevance: float = 0.0
+    explanation: str | None = None
 
     a_text_preview: str | None = None
     b_text_preview: str | None = None
 
 
-class ComparisonDebug(BaseModel):
-    """Optional Sprint 2 debug information."""
-
-    top_hybrid_pair_scores: list[dict[str, Any]] = Field(default_factory=list)
-    top_cross_mappings: list[CrossMappingItem] = Field(default_factory=list)
-
-
 class ComparisonResult(BaseModel):
-    """Sprint 2 comparison result returned to the frontend."""
+    """Final Sprint 2 comparison result returned to the frontend."""
 
     focus: str = "general"
     summary: ComparisonSummary = Field(default_factory=ComparisonSummary)
-    cross_mappings: list[CrossMappingItem] = Field(default_factory=list)
-    relationships: list[RelationshipItem] = Field(default_factory=list)
-    debug: ComparisonDebug | None = None
+    matches: list[ComparisonMatch] = Field(default_factory=list)
 
 
 class CompareResponse(BaseModel):
-    """Response for article processing and Sprint 2 comparison."""
+    """Response for article processing and final comparison result."""
 
     focus: ComparisonFocus
+
     articles: list[ProcessedArticle] = Field(default_factory=list)
+
     errors: list[StageError] = Field(default_factory=list)
 
     processing: ProcessingSummary | None = Field(
         default=None,
-        description="English timing/progress summary for the frontend progress UI.",
-    )
-
-    nlp_debug: list[ArticleNLPDebug] = Field(
-        default_factory=list,
-        description=(
-            "Debug output for verifying paragraph chunking and SBERT embedding "
-            "generation. Full embedding vectors are not returned."
-        ),
+        description="Timing and progress summary for the frontend progress UI.",
     )
 
     comparison: ComparisonResult | None = Field(
         default=None,
-        description=(
-            "Sprint 2 comparison output, including cross mappings and "
-            "relationship classifications."
-        ),
+        description="Final comparison result with chunk-level matches.",
     )
 
     session_token: str | None = Field(
