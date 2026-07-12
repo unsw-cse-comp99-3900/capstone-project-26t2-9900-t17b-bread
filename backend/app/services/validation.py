@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from app.services.errors import PipelineError, PipelineStage
+from app.services.errors import ErrorCode, PipelineError, PipelineStage
 
 
 def normalize_and_validate_url(
@@ -12,16 +12,11 @@ def normalize_and_validate_url(
     *,
     article_ref: str | None = None,
 ) -> str:
-    """Validate that ``raw_url`` is a well-formed HTTP/HTTPS URL.
-
-    Returns the trimmed URL on success. Raises ``PipelineError`` at the
-    VALIDATION stage otherwise, so invalid URLs are rejected before any
-    network request is made (PROJ-1 AC 1.4).
-    """
+    """Validate that ``raw_url`` is a well-formed HTTP/HTTPS URL."""
     if raw_url is None or not raw_url.strip():
         raise PipelineError(
             PipelineStage.VALIDATION,
-            "URL is missing or empty.",
+            ErrorCode.URL_MISSING,
             article_ref=article_ref,
             url=raw_url,
         )
@@ -32,14 +27,14 @@ def normalize_and_validate_url(
     if parsed.scheme not in ("http", "https"):
         raise PipelineError(
             PipelineStage.VALIDATION,
-            "URL must start with http:// or https://.",
+            ErrorCode.URL_INVALID_SCHEME,
             article_ref=article_ref,
             url=url,
         )
     if not parsed.netloc:
         raise PipelineError(
             PipelineStage.VALIDATION,
-            "URL is missing a host.",
+            ErrorCode.URL_MISSING_HOST,
             article_ref=article_ref,
             url=url,
         )

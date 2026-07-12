@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.api.routes import compare, fetch
+from app.api.routes import compare, fetch, upload
 from app.config import get_settings
 from app.db.base import dispose_engine, is_db_enabled, ping_db
 
@@ -61,6 +61,7 @@ app.add_middleware(
 
 app.include_router(fetch.router)
 app.include_router(compare.router)
+app.include_router(upload.router)
 
 
 @app.get("/health", tags=["meta"], summary="Health check")

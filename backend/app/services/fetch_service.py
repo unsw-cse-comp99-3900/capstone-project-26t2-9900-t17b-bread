@@ -14,17 +14,45 @@ import trafilatura
 
 from app.config import Settings, get_settings
 from app.schemas.article import RawArticle
-from app.services.errors import PipelineError, PipelineStage
+from app.services.errors import ErrorCode, PipelineError, PipelineStage
+from app.services.paywall_detection import detect_html_issue
+from app.services.progress import ProgressTracker
 from app.services.validation import domain_of, normalize_and_validate_url
 
 
-async def fetch_html(url: str, settings: Settings, *, article_ref: str | None = None) -> str:
-    """Download raw HTML for ``url``.
+def _fetch_error_from_status(status_code: int) -> ErrorCode:
+    if status_code == 401:
+        return ErrorCode.FETCH_HTTP_401
+    if status_code == 403:
+        return ErrorCode.FETCH_HTTP_403
+    if status_code == 404:
+        return ErrorCode.FETCH_HTTP_404
+    return ErrorCode.FETCH_HTTP_ERROR
 
-    Raises ``PipelineError`` at the FETCH stage on network/HTTP errors so the
-    caller can report exactly which article could not be retrieved
-    (PROJ-2 AC 2.5).
-    """
+
+def _fetch_error_from_request(exc: httpx.RequestError) -> ErrorCode:
+    if exc.__class__.__name__.endswith("Timeout"):
+        return ErrorCode.FETCH_TIMEOUT
+    return ErrorCode.FETCH_CONNECTION_FAILED
+
+
+async def fetch_html(
+    url: str,
+    settings: Settings,
+    *,
+    article_ref: str | None = None,
+    progress: ProgressTracker | None = None,
+) -> str:
+    """Download raw HTML for ``url``."""
+    if progress is not None:
+        await progress.emit(
+            percent=progress.percent,
+            message=f"Downloading article {article_ref or ''} from the web...".strip(),
+            step="fetch",
+            article_ref=article_ref,
+            status="running",
+        )
+
     headers = {"User-Agent": settings.fetch_user_agent}
     try:
         async with httpx.AsyncClient(
@@ -35,16 +63,17 @@ async def fetch_html(url: str, settings: Settings, *, article_ref: str | None = 
             response = await client.get(url)
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        code = _fetch_error_from_status(exc.response.status_code)
         raise PipelineError(
             PipelineStage.FETCH,
-            f"Server returned HTTP {exc.response.status_code} for the article.",
+            code,
             article_ref=article_ref,
             url=url,
         ) from exc
     except httpx.RequestError as exc:
         raise PipelineError(
             PipelineStage.FETCH,
-            f"Could not reach the article URL ({exc.__class__.__name__}).",
+            _fetch_error_from_request(exc),
             article_ref=article_ref,
             url=url,
         ) from exc
@@ -52,10 +81,19 @@ async def fetch_html(url: str, settings: Settings, *, article_ref: str | None = 
     if len(response.content) > settings.fetch_max_bytes:
         raise PipelineError(
             PipelineStage.FETCH,
-            "Article response is too large to process.",
+            ErrorCode.FETCH_PAGE_TOO_LARGE,
             article_ref=article_ref,
             url=url,
         )
+
+    if progress is not None:
+        await progress.emit(
+            message=f"Download finished for article {article_ref or ''}.".strip(),
+            step="fetch",
+            article_ref=article_ref,
+            status="completed",
+        )
+
     return response.text
 
 
@@ -64,15 +102,9 @@ def extract_main_content(
     url: str,
     *,
     article_ref: str | None = None,
+    progress: ProgressTracker | None = None,
 ) -> RawArticle:
-    """Extract title, source domain and cleaned body text from raw HTML.
-
-    Raises ``PipelineError`` at the EXTRACTION stage when no usable article
-    body can be recovered from the page (PROJ-2 AC 2.5).
-    """
-    # ``extract`` and ``extract_metadata`` are the most stable entry points
-    # across trafilatura 1.x/2.x (``bare_extraction``'s return type changed
-    # between versions), so we use them directly.
+    """Extract title, source domain and cleaned body text from raw HTML."""
     body_text = (
         trafilatura.extract(
             html,
@@ -92,13 +124,26 @@ def extract_main_content(
     except Exception:  # pragma: no cover - metadata is best-effort only
         title = None
 
-    if not body_text:
+    issue = detect_html_issue(html, body_text=body_text)
+    if issue is not None:
         raise PipelineError(
             PipelineStage.EXTRACTION,
-            "Could not extract readable article text from the page.",
+            issue,
             article_ref=article_ref,
             url=url,
         )
+
+    if not body_text:
+        raise PipelineError(
+            PipelineStage.EXTRACTION,
+            ErrorCode.EXTRACTION_EMPTY,
+            article_ref=article_ref,
+            url=url,
+        )
+
+    if progress is not None:
+        # sync helper; caller may emit completion asynchronously
+        pass
 
     return RawArticle(
         url=url,
@@ -113,9 +158,47 @@ async def fetch_article(
     *,
     article_ref: str | None = None,
     settings: Settings | None = None,
+    progress: ProgressTracker | None = None,
 ) -> RawArticle:
     """End-to-end fetch: validate URL -> download HTML -> extract main content."""
     settings = settings or get_settings()
+
+    if progress is not None:
+        await progress.emit(
+            message=f"Validating URL for article {article_ref or ''}...".strip(),
+            step="validation",
+            article_ref=article_ref,
+            status="running",
+        )
+
     url = normalize_and_validate_url(raw_url, article_ref=article_ref)
-    html = await fetch_html(url, settings, article_ref=article_ref)
-    return extract_main_content(html, url, article_ref=article_ref)
+
+    if progress is not None:
+        await progress.emit(
+            step="validation",
+            article_ref=article_ref,
+            status="completed",
+            message=f"URL validated for article {article_ref or ''}.".strip(),
+        )
+
+    html = await fetch_html(url, settings, article_ref=article_ref, progress=progress)
+
+    if progress is not None:
+        await progress.emit(
+            message=f"Extracting main article text for article {article_ref or ''}...".strip(),
+            step="extraction",
+            article_ref=article_ref,
+            status="running",
+        )
+
+    article = extract_main_content(html, url, article_ref=article_ref, progress=progress)
+
+    if progress is not None:
+        await progress.emit(
+            message=f"Article text extracted for article {article_ref or ''}.".strip(),
+            step="extraction",
+            article_ref=article_ref,
+            status="completed",
+        )
+
+    return article

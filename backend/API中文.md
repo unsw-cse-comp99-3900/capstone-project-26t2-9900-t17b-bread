@@ -2,8 +2,8 @@
 
 本文档说明 **T17B BREAD** 后端当前对外暴露的 HTTP 接口，供前端（React）对接使用。
 
-- **当前版本**：Sprint 1
-- **已实现**：文章抓取、清洗、分句、双栏展示所需的数据
+- **当前版本**：Sprint 1+
+- **已实现**：URL 抓取、PDF/Word 上传、清洗、分句、英文进度提示、分场景错误码、双栏展示所需数据
 - **尚未实现**：语义对比、高亮、解释（`comparison` 字段预留，Sprint 2 填充）
 - **数据库**：可选；配置 `DATABASE_URL` 后，`/api/compare` 会持久化并返回 `session_token`（见 [DATABASE_INTEGRATION中文.md](DATABASE_INTEGRATION中文.md)）
 
@@ -13,7 +13,9 @@
 |------|-----|
 | 本地 Base URL | `http://localhost:8000` |
 | 交互式文档 | `http://localhost:8000/docs` |
-| Content-Type | `application/json` |
+| JSON 接口 Content-Type | `application/json` |
+| 上传接口 Content-Type | `multipart/form-data` |
+| 进度流式接口 | `text/event-stream`（SSE） |
 | 已启用 CORS | 默认允许 `http://localhost:3000`、`http://localhost:5173` |
 
 启动后端：
@@ -31,8 +33,14 @@ uvicorn app.main:app --reload
 |------|------|------|--------|
 | `GET` | `/health` | 应用健康检查 | 1 |
 | `GET` | `/health/db` | 数据库连接检查 | 1 |
-| `POST` | `/api/fetch` | 抓取并清洗单篇文章（预览） | 1 |
-| `POST` | `/api/compare` | 处理两篇文章，返回对比就绪结构 | 1（对比结果 Sprint 2） |
+| `POST` | `/api/fetch` | 抓取并清洗单篇 URL 文章（预览） | 1 |
+| `POST` | `/api/fetch/stream` | 同上，带实时英文进度（SSE） | 1 |
+| `POST` | `/api/upload` | 上传 PDF/Word 并提取正文 | 1 |
+| `POST` | `/api/upload/stream` | 同上，带实时英文进度（SSE） | 1 |
+| `POST` | `/api/compare` | 对比两篇 URL 文章 | 1 |
+| `POST` | `/api/compare/stream` | 同上，带实时英文进度（SSE） | 1 |
+| `POST` | `/api/compare/files` | 对比两篇文章（URL 和/或上传文件） | 1 |
+| `POST` | `/api/compare/files/stream` | 同上，带实时英文进度（SSE） | 1 |
 
 ### 3. `GET /health`
 
@@ -61,7 +69,7 @@ uvicorn app.main:app --reload
 
 ### 5. `POST /api/fetch`
 
-抓取一篇新闻文章，返回清洗后的标题、来源域名和正文。适合「单篇预览」；完整对比请用 `/api/compare`。
+抓取一篇新闻文章，返回清洗后的标题、来源域名和正文。适合「单篇 URL 预览」。
 
 **请求体：**
 
@@ -82,41 +90,72 @@ uvicorn app.main:app --reload
   "url": "https://www.bbc.com/news/articles/xxxx",
   "title": "Budget passed by parliament",
   "source_domain": "www.bbc.com",
-  "body_text": "The government announced a sweeping new national budget..."
+  "body_text": "The government announced a sweeping new national budget...",
+  "source_type": "url",
+  "processing": {
+    "total_elapsed_seconds": 2.14,
+    "message": "Processing completed in 2.14 seconds.",
+    "steps": [
+      {
+        "step": "fetch",
+        "label": "Download finished for article fetch.",
+        "status": "completed",
+        "elapsed_seconds": 1.2,
+        "article_ref": "fetch"
+      }
+    ]
+  }
 }
 ```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `url` | string | 实际请求的 URL |
-| `title` | string \| null | 文章标题 |
-| `source_domain` | string \| null | 来源域名 |
-| `body_text` | string | 清洗后的正文（已去除导航、广告、页脚等） |
 
 **失败响应 `422`：**
 
 ```json
 {
   "detail": {
-    "stage": "fetch",
-    "message": "Server returned HTTP 403 for the article.",
+    "stage": "extraction",
+    "code": "extraction_paywall",
+    "message": "This article appears to be behind a paywall or membership wall. Please upload a PDF/Word copy or use a publicly accessible link.",
     "article_ref": null,
     "url": "https://example.com/story"
   }
 }
 ```
 
-**`stage` 错误阶段说明：**
+### 6. `POST /api/upload`
 
-| `stage` | 含义 | 前端建议提示 |
-|---------|------|--------------|
-| `validation` | URL 格式不合法 | 「请输入有效的 http/https 链接」 |
-| `fetch` | 网络请求失败（超时、403、404 等） | 「无法访问该文章，请换一篇试试」 |
-| `extraction` | 页面能打开但提取不出正文 | 「该页面无法识别为新闻正文」 |
+上传 PDF（`.pdf`）或 Word（`.docx`）文档，提取正文用于预览或对比。
 
-### 6. `POST /api/compare`（主接口）
+**请求：** `multipart/form-data`
 
-前端「提交对比」按钮应调用此接口。后端并发处理 Article A 和 Article B，返回结构化段落与句子，供左右双栏展示。
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `file` | file | 是 | `.pdf` 或 `.docx`；最大 10MB |
+
+**成功响应 `200`：**
+
+```json
+{
+  "article": {
+    "url": "upload://budget-report.docx",
+    "title": "Budget Report",
+    "source_domain": "upload",
+    "body_text": "The government announced...",
+    "source_type": "upload"
+  },
+  "processing": {
+    "total_elapsed_seconds": 0.85,
+    "message": "Processing completed in 0.85 seconds.",
+    "steps": []
+  }
+}
+```
+
+**失败响应 `422`：** 结构与 `/api/fetch` 相同，`stage` 可能为 `upload`。
+
+### 7. `POST /api/compare`（URL 主接口）
+
+前端「提交对比」按钮在**两篇文章都是 URL** 时使用此接口。
 
 **请求体：**
 
@@ -157,10 +196,8 @@ uvicorn app.main:app --reload
       "url": "https://outlet-a.com/story",
       "title": "Budget passed",
       "source_domain": "outlet-a.com",
-      "paragraphs": [
-        "The government announced a new budget today. Critics said it favours the wealthy.",
-        "Officials defended the plan."
-      ],
+      "source_type": "url",
+      "paragraphs": ["The government announced a new budget today..."],
       "sentences": [
         {
           "id": "A-0",
@@ -171,18 +208,17 @@ uvicorn app.main:app --reload
           "char_start": 0,
           "char_end": 44
         }
-      ]
-    },
-    {
-      "article_ref": "B",
-      "url": "https://outlet-b.com/story",
-      "title": "...",
-      "source_domain": "outlet-b.com",
-      "paragraphs": ["..."],
-      "sentences": []
+      ],
+      "paragraph_chunks": []
     }
   ],
   "errors": [],
+  "processing": {
+    "total_elapsed_seconds": 5.32,
+    "message": "Processing completed in 5.32 seconds.",
+    "steps": []
+  },
+  "nlp_debug": [],
   "comparison": null,
   "session_token": "a1b2c3d4e5f6789..."
 }
@@ -199,93 +235,258 @@ uvicorn app.main:app --reload
     {
       "article_ref": "B",
       "url": "https://outlet-b.com/story",
-      "title": "...",
-      "source_domain": "outlet-b.com",
+      "source_type": "url",
       "paragraphs": ["..."],
       "sentences": []
     }
   ],
   "errors": [
     {
-      "stage": "validation",
-      "message": "URL must start with http:// or https://.",
+      "stage": "extraction",
+      "code": "extraction_paywall",
+      "message": "This article appears to be behind a paywall or membership wall...",
       "article_ref": "A",
-      "url": "not-a-valid-url"
+      "url": "https://outlet-a.com/story"
     }
   ],
+  "processing": {
+    "total_elapsed_seconds": 3.1,
+    "message": "Processing completed in 3.1 seconds.",
+    "steps": []
+  },
   "comparison": null,
   "session_token": null
 }
 ```
 
-**响应字段说明：**
+### 8. `POST /api/compare/files`（URL + 文件混合对比）
 
-顶层：
+当任意一篇文章来自 **PDF/Word 上传**时使用此接口。每篇文章只能选 **URL 或文件其一**，不能同时传。
+
+**请求：** `multipart/form-data`
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `article_a_url` | string | 否* | 文章 A 的 URL |
+| `article_a_file` | file | 否* | 文章 A 的 PDF/Word 文件 |
+| `article_b_url` | string | 否* | 文章 B 的 URL |
+| `article_b_file` | file | 否* | 文章 B 的 PDF/Word 文件 |
+| `focus` | string | 否 | 对比焦点，默认 `general` |
+
+\* 每侧（A/B）必须提供 URL 或 file 之一。
+
+**示例：A 上传文件 + B 使用 URL**
+
+```javascript
+const form = new FormData();
+form.append("article_a_file", pdfFile); // File object
+form.append("article_b_url", "https://www.bbc.com/news/articles/xxxx");
+form.append("focus", "general");
+
+const res = await fetch("http://localhost:8000/api/compare/files", {
+  method: "POST",
+  body: form,
+});
+```
+
+**响应结构**与 `POST /api/compare` 相同。上传文章的 `source_type` 为 `"upload"`，`url` 形如 `upload://filename.pdf`。
+
+### 9. 进度提示（英文）
+
+#### 9.1 响应中的 `processing` 字段
+
+所有耗时接口（fetch / upload / compare）在完成后都会返回 `processing`：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `total_elapsed_seconds` | number | 总耗时（秒） |
+| `message` | string | 英文摘要，如 `"Processing completed in 5.32 seconds."` |
+| `steps[]` | array | 各步骤英文标签、状态、耗时 |
+
+`steps[]` 每项：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `step` | string | 步骤名，如 `fetch`、`extraction`、`preprocessing`、`embedding` |
+| `label` | string | 英文进度文案（可直接显示在 UI） |
+| `status` | string | `pending` / `running` / `completed` / `failed` / `skipped` |
+| `elapsed_seconds` | number \| null | 该步骤耗时 |
+| `article_ref` | string \| null | `"A"` / `"B"` / `"fetch"` / `"upload"` |
+
+#### 9.2 SSE 实时进度（进度条推荐）
+
+以下接口返回 **Server-Sent Events**，适合前端实时更新进度条：
+
+| 接口 | 用途 |
+|------|------|
+| `POST /api/fetch/stream` | 单篇 URL 抓取进度 |
+| `POST /api/upload/stream` | 单文件上传进度 |
+| `POST /api/compare/stream` | 双 URL 对比进度 |
+| `POST /api/compare/files/stream` | 混合 URL/文件对比进度 |
+
+**事件格式：**
+
+```
+event: progress
+data: {"percent": 35, "message": "Extracting main article text for article A...", "elapsed_seconds": 2.1, "step": "extraction", "article_ref": "A", "status": "running"}
+
+event: result
+data: { ...完整 JSON 响应... }
+```
+
+| 事件 | 说明 |
+|------|------|
+| `progress` | 进度更新；用 `percent`（0–100）驱动进度条，`message` 显示英文状态 |
+| `result` | 最终结果；结构与对应非 stream 接口相同 |
+
+**前端 SSE 示例（compare）：**
+
+```javascript
+async function compareWithProgress(urlA, urlB, onProgress) {
+  const res = await fetch("http://localhost:8000/api/compare/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      article_a_url: urlA,
+      article_b_url: urlB,
+      focus: "general",
+    }),
+  });
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop() || "";
+
+    for (const chunk of chunks) {
+      const lines = chunk.split("\n");
+      const eventLine = lines.find((l) => l.startsWith("event:"));
+      const dataLine = lines.find((l) => l.startsWith("data:"));
+      if (!eventLine || !dataLine) continue;
+
+      const event = eventLine.replace("event:", "").trim();
+      const data = JSON.parse(dataLine.replace("data:", "").trim());
+
+      if (event === "progress") onProgress(data);
+      if (event === "result") return data;
+    }
+  }
+}
+```
+
+### 10. 错误码参考
+
+所有错误均包含 `stage`、`code`、`message`（英文）。前端应优先按 **`code`** 分支展示提示。
+
+#### 10.1 校验阶段（`stage: validation`）
+
+| `code` | 含义 | 前端建议 |
+|--------|------|----------|
+| `url_missing` | URL 为空 | 请输入文章链接 |
+| `url_invalid_scheme` | 不是 http/https | 链接必须以 http:// 或 https:// 开头 |
+| `url_missing_host` | URL 缺少域名 | 请输入完整链接 |
+| `input_missing` | 既无 URL 也无文件 | 请提供 URL 或上传 PDF/Word |
+
+#### 10.2 网络阶段（`stage: fetch`）
+
+| `code` | 含义 | 前端建议 |
+|--------|------|----------|
+| `fetch_timeout` | 下载超时 | 网站响应太慢，请换一篇或稍后重试 |
+| `fetch_connection_failed` | 无法连接 | 检查链接和网络 |
+| `fetch_http_401` | HTTP 401 | 该文章需要登录 |
+| `fetch_http_403` | HTTP 403 | 网站拒绝访问（可能反爬） |
+| `fetch_http_404` | HTTP 404 | 链接不存在或已失效 |
+| `fetch_http_error` | 其他 HTTP 错误 | 无法下载该页面 |
+| `fetch_page_too_large` | 页面过大 | 请使用直接的文章链接 |
+
+#### 10.3 正文提取阶段（`stage: extraction`）
+
+| `code` | 含义 | 前端建议 |
+|--------|------|----------|
+| `extraction_paywall` | **付费墙/会员墙** | 请上传 PDF/Word，或换公开链接 |
+| `extraction_login_required` | **需要登录** | 请登录后导出 PDF/Word 再上传 |
+| `extraction_not_news_page` | 不是新闻正文页 | 请使用文章详情页链接 |
+| `extraction_js_rendered` | JS 动态渲染 | 请上传 PDF/Word 代替 |
+| `extraction_empty` | 提不出正文 | 该页面无法识别为新闻 |
+
+#### 10.4 上传阶段（`stage: upload`）
+
+| `code` | 含义 | 前端建议 |
+|--------|------|----------|
+| `upload_unsupported_type` | 文件类型不支持 | 仅支持 .pdf 和 .docx |
+| `upload_file_too_large` | 文件过大 | 请使用小于 10MB 的文件 |
+| `upload_parse_failed` | 解析失败 | 文件可能损坏或加密 |
+| `upload_empty_document` | 文档无文字 | 请检查文件内容 |
+
+### 11. 响应字段说明
+
+顶层（compare）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `focus` | string | 本次请求的对比焦点 |
 | `articles` | array | 成功处理的文章（0–2 篇） |
 | `errors` | array | 失败文章的错误（0–2 条） |
+| `processing` | object | 英文耗时与步骤摘要 |
+| `nlp_debug` | array | SBERT 分块/向量调试信息 |
 | `comparison` | object \| null | Sprint 2 对比结果；当前恒为 `null` |
-| `session_token` | string \| null | 持久化成功时返回；未配数据库或写库失败时为 `null` |
+| `session_token` | string \| null | 持久化成功时返回 |
 
 `articles[]` 每篇文章：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `article_ref` | string | `"A"` 或 `"B"`，用于区分左右栏 |
-| `url` | string | 文章 URL |
-| `title` | string \| null | 标题 |
-| `source_domain` | string \| null | 来源域名 |
-| `paragraphs` | string[] | 按段落切分的正文 |
-| `sentences` | object[] | 句子级结构 |
-
-`sentences[]` 每个句子：
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `id` | string | 稳定 ID，如 `"A-0"`；Sprint 2 高亮锚点 |
 | `article_ref` | string | `"A"` 或 `"B"` |
-| `text` | string | 句子文本 |
-| `paragraph_index` | number | 段落索引（从 0 开始） |
-| `sentence_index` | number | 全文句子序号（从 0 开始） |
-| `char_start` | number | 在清洗后正文中的起始字符偏移 |
-| `char_end` | number | 在清洗后正文中的结束字符偏移 |
+| `url` | string | 文章 URL 或 `upload://文件名` |
+| `source_type` | string | `"url"` 或 `"upload"` |
+| `title` | string \| null | 标题 |
+| `source_domain` | string \| null | 来源域名；上传时为 `"upload"` |
+| `paragraphs` | string[] | 段落列表 |
+| `sentences` | object[] | 句子级结构 |
 
 `errors[]` 每条错误：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `stage` | string | `validation` / `fetch` / `extraction` |
-| `message` | string | 可读错误信息 |
-| `article_ref` | string \| null | 失败文章 `"A"` 或 `"B"` |
-| `url` | string \| null | 出错的 URL |
+| `stage` | string | 失败阶段 |
+| `code` | string | 机器可读错误码（见第 10 节） |
+| `message` | string | 英文可读说明 |
+| `article_ref` | string \| null | `"A"` 或 `"B"` |
+| `url` | string \| null | 出错的 URL 或 upload 路径 |
 
-### 7. 前端组件对接映射
+### 12. 前端组件对接映射
 
 | 前端组件 | 使用的接口 / 字段 |
 |----------|-------------------|
-| URL Input Component | `POST /api/compare` → `article_a_url`、`article_b_url` |
-| Comparison Focus Selector | `focus`（Sprint 2 起影响对比结果） |
-| Article Viewer (Side-by-Side) | `articles` 中 `article_ref === "A"` / `"B"`；正文用 `paragraphs` 或 `sentences` |
-| Colour-Coded Difference Renderer | Sprint 2：`comparison` + `sentences[].id` 高亮 |
-| Similarity Rationale Panel | Sprint 2：`comparison` 中的解释文本 |
+| URL Input Component | `POST /api/compare` 或 `/api/compare/files` |
+| File Upload Component | `POST /api/upload`（预览）或 `/api/compare/files`（对比） |
+| Progress Bar | `/stream` 接口的 `progress` 事件，或响应中的 `processing` |
+| Error Banner | `errors[].code` + `errors[].message` |
+| Comparison Focus Selector | `focus` |
+| Article Viewer (Side-by-Side) | `articles` 中 `article_ref === "A"` / `"B"` |
+| Paywall Hint | `code === "extraction_paywall"` 或 `"extraction_login_required"` → 引导上传 PDF/Word |
 
-**Sprint 1 推荐渲染逻辑：**
+**推荐渲染逻辑：**
 
 ```text
-1. 用户提交两个 URL
-2. POST /api/compare
-3. 若 errors.length > 0 → 按 article_ref 显示对应错误，不阻断另一篇展示
-4. article_ref === "A" → 左栏
-5. article_ref === "B" → 右栏
-6. comparison === null → 暂不渲染高亮/解释（Sprint 2 再接）
+1. 用户为每篇文章选择 URL 或上传 PDF/Word
+2. 有任意文件 → POST /api/compare/files（或 /files/stream 显示进度条）
+   纯 URL   → POST /api/compare（或 /stream）
+3. 处理 errors[]：按 code 显示不同英文/中文提示
+4. 遇到 paywall/login → 提示用户上传 PDF/Word
+5. article_ref === "A" → 左栏；article_ref === "B" → 右栏
 ```
 
-### 8. 前端调用示例
+### 13. 前端调用示例
 
-**使用 `fetch`：**
+**纯 URL 对比：**
 
 ```javascript
 const API_BASE = "http://localhost:8000";
@@ -294,60 +495,50 @@ async function compareArticles(urlA, urlB, focus = "general") {
   const res = await fetch(`${API_BASE}/api/compare`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      article_a_url: urlA,
-      article_b_url: urlB,
-      focus,
-    }),
+    body: JSON.stringify({ article_a_url: urlA, article_b_url: urlB, focus }),
   });
-
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-
   return res.json();
 }
+```
 
-const data = await compareArticles(urlA, urlB, "political");
-const articleA = data.articles.find((a) => a.article_ref === "A");
-const articleB = data.articles.find((a) => a.article_ref === "B");
+**混合 URL + 文件对比：**
 
-if (data.errors.length > 0) {
-  data.errors.forEach((err) => {
-    console.warn(`Article ${err.article_ref} failed at ${err.stage}:`, err.message);
+```javascript
+async function compareMixed(fileA, urlB) {
+  const form = new FormData();
+  form.append("article_a_file", fileA);
+  form.append("article_b_url", urlB);
+  form.append("focus", "general");
+
+  const res = await fetch(`${API_BASE}/api/compare/files`, {
+    method: "POST",
+    body: form,
   });
+  return res.json();
 }
 ```
 
-**使用 axios：**
+**按错误码展示提示：**
 
 ```javascript
-import axios from "axios";
+const PAYWALL_CODES = new Set([
+  "extraction_paywall",
+  "extraction_login_required",
+]);
 
-const api = axios.create({
-  baseURL: "http://localhost:8000",
-  headers: { "Content-Type": "application/json" },
-});
-
-const { data } = await api.post("/api/compare", {
-  article_a_url: urlA,
-  article_b_url: urlB,
-  focus: "general",
-});
+function renderError(err) {
+  if (PAYWALL_CODES.has(err.code)) {
+    return "该文章需要会员/登录。请上传 PDF 或 Word 文件。";
+  }
+  return err.message; // 后端已返回英文说明，可直接显示或翻译
+}
 ```
 
-**单篇预览：**
+### 14. 前端校验建议
 
-```javascript
-const { data } = await api.post("/api/fetch", {
-  url: "https://www.bbc.com/news/articles/xxxx",
-});
-// data.title, data.source_domain, data.body_text
-```
-
-### 9. 前端校验建议
-
-在调用后端前，前端可先做一次本地校验，减少无效请求（与后端 PROJ-1 一致）：
+- URL 模式：两个 URL 都合法后再启用对比按钮
+- 文件模式：仅允许 `.pdf`、`.docx`，单文件 ≤ 10MB
+- 每篇文章：URL 和文件二选一，不能同时填
 
 ```javascript
 function isValidHttpUrl(value) {
@@ -358,12 +549,14 @@ function isValidHttpUrl(value) {
     return false;
   }
 }
+
+function isAllowedUpload(file) {
+  const name = file.name.toLowerCase();
+  return name.endsWith(".pdf") || name.endsWith(".docx");
+}
 ```
 
-- 两个 URL 都合法后再启用「对比」按钮（PROJ-1 AC 1.2）
-- 非法 URL 可在前端直接提示，不必等后端返回
-
-### 10. Sprint 2 预留：`comparison` 字段（草案）
+### 15. Sprint 2 预留：`comparison` 字段（草案）
 
 当前 `comparison` 为 `null`。Sprint 2 实现语义对比后，预计结构类似：
 
@@ -379,48 +572,34 @@ function isValidHttpUrl(value) {
         "explanation": "Both sentences describe the same budget announcement."
       }
     ],
-    "unique_a": ["A-5"],
-    "unique_b": ["B-7"],
-    "summary": {
-      "similarities": ["..."],
-      "differences": ["..."],
-      "unique_to_a": ["..."],
-      "unique_to_b": ["..."]
-    }
+    "summary": { "similarities": ["..."], "differences": ["..."] }
   }
 }
 ```
 
-| `label` 值 | 含义 | 建议颜色 |
-|------------|------|----------|
-| `aligned` | 语义一致 | 绿色 |
-| `partially_aligned` | 部分一致 | 黄色 |
-| `divergent` | 明显分歧 | 红色 |
-
-> 以上为预期结构草案，Sprint 2 定稿后更新。前端可先用 `comparison === null` 做兼容判断。
-
-### 11. 常见问题
+### 16. 常见问题
 
 **Q: 为什么 `/api/compare` 返回 200 但 `errors` 不为空？**  
-A: 设计为「部分成功」——一篇失败不影响另一篇展示，前端应同时处理 `articles` 和 `errors`。
+A: 设计为「部分成功」——一篇失败不影响另一篇展示。
 
-**Q: 为什么有些新闻站返回 `stage: "fetch"`？**  
-A: 部分网站有反爬（403）或需要登录，属正常现象。
+**Q: 遇到会员墙怎么办？**  
+A: 后端返回 `code: "extraction_paywall"` 或 `"extraction_login_required"`。请引导用户上传 PDF/Word，使用 `POST /api/compare/files`。
+
+**Q: 进度条用哪个接口？**  
+A: 推荐使用 `/stream` 系列接口，监听 `progress` 事件的 `percent` 和 `message`（英文）。
+
+**Q: 支持 .doc 吗？**  
+A: 仅支持 `.docx`，不支持旧版 `.doc`。
 
 **Q: 前端端口不是 3000/5173 怎么办？**  
 A: 在 `backend/.env` 中设置：`CORS_ORIGINS=http://localhost:你的端口`
 
-**Q: 如何判断后端是否启动？**  
-A: 请求 `GET /health`，或打开 `http://localhost:8000/docs`。
-
-**Q: `session_token` 是什么？**  
-A: 数据库持久化成功时返回的会话标识；未配置数据库或写库失败时为 `null`。前端 Sprint 1 可忽略。
-
-### 12. 变更记录
+### 17. 变更记录
 
 | 日期 | 版本 | 说明 |
 |------|------|------|
 | 2026-06-23 | Sprint 1 | 初版：fetch / compare / health |
 | 2026-06-25 | Sprint 1 | 分段中英版；新增 `/health/db`、`session_token` |
+| 2026-06-29 | Sprint 1+ | 新增 PDF/Word 上传、SSE 英文进度、分场景错误码 `code` |
 
 ---
