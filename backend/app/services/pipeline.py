@@ -21,6 +21,7 @@ from app.services.progress import ProgressTracker
 from app.services.relationship_classification_service import (
     get_relationship_classification_service,
 )
+from app.services.summary_service import get_summary_service
 
 
 VALID_FOCUS_VALUES = {
@@ -161,6 +162,29 @@ async def _run_post_fetch_pipeline(
             article_ref=article_ref,
             status="completed",
         )
+
+        await progress.emit(
+            message=f"Generating extractive summary for article {article_ref}...",
+            step="summarization",
+            article_ref=article_ref,
+            status="running",
+        )
+
+    summary_service = get_summary_service()
+
+    processed.summary = await asyncio.to_thread(
+        summary_service.summarize_article,
+        processed,
+    )
+
+    if progress is not None:
+        await progress.emit(
+            message=f"Extractive summary ready for article {article_ref}.",
+            step="summarization",
+            article_ref=article_ref,
+            status="completed",
+        )
+
         await progress.emit(
             message=f"Building paragraph chunks for article {article_ref}...",
             step="chunking",
