@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, func
+from sqlalchemy import DateTime, Integer, String, Text, func, Float, Numeric, ForeignKey
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -40,6 +41,32 @@ class UserSession(Base):
     session_token: Mapped[str] = mapped_column(String(255), nullable=False)
     article_a_url: Mapped[str] = mapped_column(Text, nullable=False)
     article_b_url: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )
+
+class EmbeddingCollection(Base):
+    """``embeddings_collection`` table — stores semantic vectors for article sentences."""
+
+    __tablename__ = "embeddings_collection"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id", ondelete="CASCADE"))
+    sentence_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    text_content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(ARRAY(Float), nullable=False)
+
+class ComparisonResult(Base):
+    """``comparison_results`` table — stores the cross-mapping alignment matrix."""
+
+    __tablename__ = "comparison_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("user_sessions.id", ondelete="CASCADE"))
+    article_a_id: Mapped[int] = mapped_column(ForeignKey("articles.id"))
+    article_b_id: Mapped[int] = mapped_column(ForeignKey("articles.id"))
+    alignment_matrix: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    similarity_score: Mapped[float] = mapped_column(Numeric(4, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp()
     )
