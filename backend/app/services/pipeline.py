@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,7 +14,7 @@ from app.services.bm25_similarity_service import get_bm25_similarity_service
 from app.services.cosine_similarity_service import get_cosine_similarity_service
 from app.services.cross_mapping_service import get_cross_mapping_service
 from app.services.embedding_service import get_embedding_service
-from app.services.errors import PipelineError
+from app.services.errors import ErrorCode, PipelineError, PipelineStage
 from app.services.hybrid_scoring_service import get_hybrid_scoring_service
 from app.services.paragraph_chunking_service import build_paragraph_chunks
 from app.services.preprocessing_service import preprocess_article
@@ -21,6 +22,8 @@ from app.services.progress import ProgressTracker
 from app.services.relationship_classification_service import (
     get_relationship_classification_service,
 )
+
+logger = logging.getLogger(__name__)
 
 
 VALID_FOCUS_VALUES = {
@@ -284,6 +287,44 @@ async def process_article_input(
             article_ref=article_ref,
             url=source,
             error=exc,
+        )
+
+    except Exception as exc:  # noqa: BLE001 - convert any unexpected failure
+        # Any non-pipeline error (e.g. a missing ML dependency, model load
+        # failure, or OOM) is turned into a per-article error so the other
+        # article can still be processed and the stream terminates cleanly
+        # instead of hanging.
+        logger.exception(
+            "Unexpected error while processing article %s", article_ref
+        )
+
+        wrapped = PipelineError(
+            PipelineStage.EMBEDDING,
+            ErrorCode.UNKNOWN,
+            article_ref=article_ref,
+            message=(
+                f"An unexpected error occurred while processing article "
+                f"{article_ref}: {exc}"
+            ),
+        )
+
+        if progress is not None:
+            await progress.emit(
+                percent=percent_end,
+                message=f"Article {article_ref} failed: {wrapped.message}",
+                step="complete",
+                article_ref=article_ref,
+                status="failed",
+            )
+
+        source = article_input.url or (
+            f"upload://{article_input.filename}" if article_input.filename else None
+        )
+
+        return ArticleResult(
+            article_ref=article_ref,
+            url=source,
+            error=wrapped,
         )
 
 

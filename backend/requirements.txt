@@ -9,6 +9,11 @@ python-dotenv==1.0.1
 pypdf==5.1.0
 python-docx==1.1.2
 python-multipart==0.0.20
+# Image/scanned PDF OCR -> text/Word. PyMuPDF renders pages; pytesseract wraps
+# the Tesseract OCR engine (install the Tesseract binary separately on the OS).
+pymupdf==1.24.14
+pytesseract==0.3.13
+pillow==11.0.0
 sentence-transformers
 
 # Database (PostgreSQL via async SQLAlchemy). psycopg is only loaded when a

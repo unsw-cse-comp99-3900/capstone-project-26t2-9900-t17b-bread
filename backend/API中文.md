@@ -35,8 +35,10 @@ uvicorn app.main:app --reload
 | `GET` | `/health/db` | 数据库连接检查 | 1 |
 | `POST` | `/api/fetch` | 抓取并清洗单篇 URL 文章（预览） | 1 |
 | `POST` | `/api/fetch/stream` | 同上，带实时英文进度（SSE） | 1 |
-| `POST` | `/api/upload` | 上传 PDF/Word 并提取正文 | 1 |
+| `POST` | `/api/upload` | 上传 PDF/Word 并提取正文（扫描件自动 OCR） | 1 |
 | `POST` | `/api/upload/stream` | 同上，带实时英文进度（SSE） | 1 |
+| `POST` | `/api/upload/pdf-type` | 判断 PDF 是文字型还是图片（扫描）型 | 1 |
+| `POST` | `/api/upload/pdf-to-word` | 图片/扫描 PDF 做 OCR 并下载清洗后的 Word（.docx） | 1 |
 | `POST` | `/api/compare` | 对比两篇 URL 文章 | 1 |
 | `POST` | `/api/compare/stream` | 同上，带实时英文进度（SSE） | 1 |
 | `POST` | `/api/compare/files` | 对比两篇文章（URL 和/或上传文件） | 1 |
@@ -153,11 +155,95 @@ uvicorn app.main:app --reload
 
 **失败响应 `422`：** 结构与 `/api/fetch` 相同，`stage` 可能为 `upload`。
 
-### 7. `POST /api/compare`（URL 主接口）
+> 文字型 PDF 直接读取正文；图片/扫描型 PDF 会被自动识别并走 OCR（服务器需安装
+> Tesseract 引擎）。若 OCR 不可用，错误 `code` 为 `ocr_unavailable`。
 
-前端「提交对比」按钮在**两篇文章都是 URL** 时使用此接口。
+### 6a. `POST /api/upload/pdf-type`
 
-**请求体：**
+判断上传的 PDF 是**文字型**（可选中文本）还是**图片型**（扫描件），供前端选择
+不同处理流程。
+
+**请求：** `multipart/form-data`，单个 `file` 字段（必须是 `.pdf`）。
+
+**成功响应 `200`：**
+
+```json
+{
+  "pdf_type": "image",
+  "is_image_based": true,
+  "page_count": 3,
+  "chars_per_page": 4.0,
+  "pages_with_images": 3,
+  "ocr_available": true,
+  "recommended_endpoint": "/api/upload/pdf-to-word"
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `pdf_type` | string | `"text"`（文字型）或 `"image"`（图片型） |
+| `is_image_based` | boolean | 为 `true` 时是扫描件，需要 OCR |
+| `page_count` | number | 页数 |
+| `chars_per_page` | number | 平均每页可直接提取的字符数 |
+| `pages_with_images` | number | 含内嵌图片的页数 |
+| `ocr_available` | boolean | 当前服务器是否可对图片 PDF 做 OCR |
+| `recommended_endpoint` | string | `/api/upload`（文字型）或 `/api/upload/pdf-to-word`（扫描件） |
+
+### 6b. `POST /api/upload/pdf-to-word`
+
+将**图片/扫描 PDF** 转换成清洗后的、可下载的 **Word（.docx）** 文件。流程为：
+逐页 OCR → 去除页码、重复页眉页脚、符号噪音 → 只保留关键正文（同样会送入后续
+对比流程）。也接受文字型 PDF（直接导出其文本）。
+
+**请求：** `multipart/form-data`，单个 `file` 字段（`.pdf`）。
+
+**成功响应 `200`：** 响应体是 **`.docx` 二进制**（不是 JSON）。
+
+| 响应头 | 说明 |
+|--------|------|
+| `Content-Type` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+| `Content-Disposition` | `attachment; filename*=UTF-8''<名称>.docx` |
+| `X-Extracted-Chars` | 清洗后提取的字符数 |
+| `X-Extracted-Text-Preview` | URL 编码的正文预览（前 ~180 字） |
+
+**失败响应 `422`：** JSON `{ "detail": { stage, code, message, ... } }`。常见 `code`：
+`ocr_unavailable`、`ocr_failed`、`ocr_no_text_found`、`upload_unsupported_type`。
+
+**前端下载示例：**
+
+```javascript
+async function convertScanToWord(pdfFile) {
+  const form = new FormData();
+  form.append("file", pdfFile);
+
+  const res = await fetch("http://localhost:8000/api/upload/pdf-to-word", {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    const { detail } = await res.json();
+    throw new Error(detail.message);
+  }
+
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename\*=UTF-8''(.+)$/);
+  const filename = match ? decodeURIComponent(match[1]) : "converted.docx";
+
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+```
+
+### 7. `POST /api/compare`（URL 与/或直接粘贴文本接口）
+
+当每篇文章以 **URL 或直接粘贴的纯文本**提交（不涉及文件上传）时使用此接口，两种方式可混用（例如 A 用 URL、B 用粘贴文本）。
+
+**请求体（URL）：**
 
 ```json
 {
@@ -167,11 +253,25 @@ uvicorn app.main:app --reload
 }
 ```
 
+**请求体（粘贴文本）：**
+
+```json
+{
+  "article_a_text": "用户直接粘贴的完整文章正文……",
+  "article_b_text": "第二篇文章的完整正文……",
+  "focus": "general"
+}
+```
+
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `article_a_url` | string | 是 | 文章 A 的 URL |
-| `article_b_url` | string | 是 | 文章 B 的 URL |
+| `article_a_url` | string | 否* | 文章 A 的 URL |
+| `article_b_url` | string | 否* | 文章 B 的 URL |
+| `article_a_text` | string | 否* | 文章 A 的粘贴纯文本正文 |
+| `article_b_text` | string | 否* | 文章 B 的粘贴纯文本正文 |
 | `focus` | string | 否 | 对比焦点，默认 `"general"` |
+
+\* 每一侧（A/B）必须提供 URL 或粘贴文本其一；若同时提供，则以粘贴文本为准；两者都缺失返回 `422`。粘贴文本的 `source_type` 为 `"text"`，`url` 形如 `pasted-text://article-a`；文本少于 20 个字符会返回该篇的 `text_too_short`（或 `text_empty`）校验错误。
 
 **`focus` 可选值：**
 
@@ -261,19 +361,21 @@ uvicorn app.main:app --reload
 
 ### 8. `POST /api/compare/files`（URL + 文件混合对比）
 
-当任意一篇文章来自 **PDF/Word 上传**时使用此接口。每篇文章只能选 **URL 或文件其一**，不能同时传。
+当任意一篇文章来自 **PDF/Word 上传**时使用此接口。每篇文章只能选 **URL、粘贴文本或文件其一**，不能同时传。
 
 **请求：** `multipart/form-data`
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `article_a_url` | string | 否* | 文章 A 的 URL |
+| `article_a_text` | string | 否* | 文章 A 的粘贴纯文本正文 |
 | `article_a_file` | file | 否* | 文章 A 的 PDF/Word 文件 |
 | `article_b_url` | string | 否* | 文章 B 的 URL |
+| `article_b_text` | string | 否* | 文章 B 的粘贴纯文本正文 |
 | `article_b_file` | file | 否* | 文章 B 的 PDF/Word 文件 |
 | `focus` | string | 否 | 对比焦点，默认 `general` |
 
-\* 每侧（A/B）必须提供 URL 或 file 之一。
+\* 每侧（A/B）必须且仅能提供 URL、粘贴文本或文件其一；一侧提供多个会返回 `400`。
 
 **示例：A 上传文件 + B 使用 URL**
 
@@ -392,7 +494,9 @@ async function compareWithProgress(urlA, urlB, onProgress) {
 | `url_missing` | URL 为空 | 请输入文章链接 |
 | `url_invalid_scheme` | 不是 http/https | 链接必须以 http:// 或 https:// 开头 |
 | `url_missing_host` | URL 缺少域名 | 请输入完整链接 |
-| `input_missing` | 既无 URL 也无文件 | 请提供 URL 或上传 PDF/Word |
+| `input_missing` | 未提供任何来源 | 请提供 URL、粘贴文本或上传 PDF/Word |
+| `text_empty` | 粘贴文本为空 | 请先粘贴文章正文再对比 |
+| `text_too_short` | 粘贴文本少于 20 字符 | 请粘贴完整正文，而不只是标题 |
 
 #### 10.2 网络阶段（`stage: fetch`）
 
@@ -424,6 +528,15 @@ async function compareWithProgress(urlA, urlB, onProgress) {
 | `upload_file_too_large` | 文件过大 | 请使用小于 10MB 的文件 |
 | `upload_parse_failed` | 解析失败 | 文件可能损坏或加密 |
 | `upload_empty_document` | 文档无文字 | 请检查文件内容 |
+
+#### 10.5 OCR / 扫描 PDF（`stage: upload`）
+
+| `code` | 含义 | 前端建议 |
+|--------|------|----------|
+| `ocr_unavailable` | 服务器未安装 Tesseract | OCR 不可用，请上传文字 PDF/Word |
+| `ocr_failed` | OCR 无法识别扫描件 | 扫描质量太低，请换更清晰文件 |
+| `ocr_no_text_found` | OCR 运行但未找到文字 | 页面可能空白或无法识别 |
+| `pdf_not_image_based` | PDF 本身就是文字型 | 请改用 `/api/upload` |
 
 ### 11. 响应字段说明
 
@@ -601,5 +714,7 @@ A: 在 `backend/.env` 中设置：`CORS_ORIGINS=http://localhost:你的端口`
 | 2026-06-23 | Sprint 1 | 初版：fetch / compare / health |
 | 2026-06-25 | Sprint 1 | 分段中英版；新增 `/health/db`、`session_token` |
 | 2026-06-29 | Sprint 1+ | 新增 PDF/Word 上传、SSE 英文进度、分场景错误码 `code` |
+| 2026-07-16 | Sprint 1+ | 新增图片/扫描 PDF 识别、OCR + 噪音清洗、`pdf-to-word` 下载 |
+| 2026-07-16 | Sprint 1+ | 新增直接粘贴文本对比（`article_a_text`/`article_b_text`） |
 
 ---

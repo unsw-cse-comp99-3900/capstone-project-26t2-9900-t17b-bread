@@ -17,10 +17,12 @@ const relationshipOptions = [
 
 const articleInputModes = [
   { value: 'url', label: 'URL' },
+  { value: 'text', label: 'Paste text' },
   { value: 'upload', label: 'PDF / Word' },
 ]
 
 const maxUploadSizeBytes = 10 * 1024 * 1024
+const minTextChars = 20
 
 const demoArticles = {
   urls: {
@@ -256,6 +258,36 @@ const friendlyErrorMessages = {
     message: 'The uploaded document does not contain enough extractable article text.',
     action: 'Check the file contents and upload a readable copy.',
   },
+  text_empty: {
+    title: 'No text was pasted',
+    message: 'The article text box is empty.',
+    action: 'Paste the article content into the text box before comparing.',
+  },
+  text_too_short: {
+    title: 'Pasted text is too short',
+    message: 'There is not enough text to analyse this article.',
+    action: 'Paste the full article body, not just the headline.',
+  },
+  ocr_unavailable: {
+    title: 'Scanned PDF reading is unavailable',
+    message: 'The server cannot run OCR right now, so this scanned PDF cannot be read.',
+    action: 'Upload a text-based PDF/Word file, or paste the article text instead.',
+  },
+  ocr_failed: {
+    title: 'Scanned PDF could not be read',
+    message: 'OCR was unable to recognise text in this scanned document.',
+    action: 'Try a clearer scan, a text-based PDF, or paste the article text.',
+  },
+  ocr_no_text_found: {
+    title: 'No text found in the scanned PDF',
+    message: 'OCR completed but did not find readable article text.',
+    action: 'Check that the PDF contains article pages, then try again.',
+  },
+  pdf_not_image_based: {
+    title: 'This PDF already has selectable text',
+    message: 'This looks like a text PDF, so OCR conversion was not needed.',
+    action: 'Use it directly for comparison, or download it as Word if you like.',
+  },
 }
 
 function isValidHttpUrl(value) {
@@ -278,6 +310,32 @@ function isAllowedUpload(file) {
 
 function isValidUpload(file) {
   return Boolean(file) && isAllowedUpload(file) && file.size <= maxUploadSizeBytes
+}
+
+function isValidText(text) {
+  return typeof text === 'string' && text.trim().length >= minTextChars
+}
+
+function isPdfFile(file) {
+  return Boolean(file) && file.name.toLowerCase().endsWith('.pdf')
+}
+
+function getDownloadFilename(contentDisposition, fallback) {
+  if (!contentDisposition) {
+    return fallback
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return fallback
+    }
+  }
+
+  const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
+  return plainMatch ? plainMatch[1] : fallback
 }
 
 function getUrlHost(value) {
@@ -340,12 +398,19 @@ function normalizeMatch(match, index) {
     match.b_sentence_id ??
     match.right_sentence_id
 
+  const aParagraphIndex = match.a_paragraph_index ?? match.aParagraphIndex ?? null
+  const bParagraphIndex = match.b_paragraph_index ?? match.bParagraphIndex ?? null
+
   return {
     ...match,
     id: match.id ?? `${sentenceAId ?? 'A'}-${sentenceBId ?? 'B'}-${index}`,
     label,
     sentenceAId,
     sentenceBId,
+    aParagraphIndex,
+    bParagraphIndex,
+    aTextPreview: match.a_text_preview ?? match.aTextPreview ?? null,
+    bTextPreview: match.b_text_preview ?? match.bTextPreview ?? null,
     explanation:
       match.explanation ??
       'This match was returned by the comparison pipeline.',
@@ -366,8 +431,22 @@ function getMatchForSentence(matches, side, sentenceId) {
   )
 }
 
+function getMatchForParagraph(matches, side, paragraphIndex) {
+  return matches.find((match) => {
+    const index = side === 'A' ? match.aParagraphIndex : match.bParagraphIndex
+    return index != null && index === paragraphIndex
+  })
+}
+
 function getSentenceText(article, sentenceId) {
   return article?.sentences?.find((sentence) => sentence.id === sentenceId)?.text
+}
+
+function getParagraphText(article, paragraphIndex) {
+  if (paragraphIndex == null) {
+    return undefined
+  }
+  return article?.paragraphs?.[paragraphIndex]
 }
 
 function getCompareReadinessMessage(canCompare, isLoading) {
@@ -425,6 +504,12 @@ async function parseEventStream(response, onProgress) {
         onProgress(data)
       }
 
+      if (event === 'error') {
+        throw new Error(
+          data?.message ?? 'The backend could not complete the request.',
+        )
+      }
+
       if (event === 'result') {
         return data
       }
@@ -444,27 +529,85 @@ function clearFieldError(errors, fieldName) {
   return nextErrors
 }
 
+function PdfToolbox({ file, pdfInfo, wordStatus, onConvertWord, isLoading }) {
+  if (!isPdfFile(file)) {
+    return null
+  }
+
+  const isImagePdf = pdfInfo?.is_image_based
+  const typeLabel =
+    pdfInfo == null
+      ? null
+      : isImagePdf
+        ? 'Scanned / image PDF detected — OCR will be used.'
+        : 'Text PDF detected — text can be read directly.'
+
+  return (
+    <div className="pdf-toolbox">
+      {pdfInfo?.detecting && (
+        <p className="input-hint">Checking whether this PDF is scanned...</p>
+      )}
+      {typeLabel && (
+        <p className={`pdf-type-badge${isImagePdf ? ' pdf-type-badge--image' : ''}`}>
+          {typeLabel}
+        </p>
+      )}
+      {pdfInfo && !pdfInfo.ocr_available && isImagePdf && (
+        <p className="input-hint input-hint--warn">
+          OCR is not available on the server, so this scan may not be readable.
+        </p>
+      )}
+
+      <button
+        className="word-download-button"
+        type="button"
+        onClick={onConvertWord}
+        disabled={isLoading || wordStatus?.state === 'loading'}
+      >
+        {wordStatus?.state === 'loading'
+          ? 'Converting to Word...'
+          : 'Download as Word (.docx)'}
+      </button>
+
+      {wordStatus?.state === 'success' && (
+        <p className="input-hint input-hint--success">{wordStatus.message}</p>
+      )}
+      {wordStatus?.state === 'error' && (
+        <p className="field-error">{wordStatus.message}</p>
+      )}
+    </div>
+  )
+}
+
 function ArticleSourceField({
   side,
   title,
   mode,
   url,
+  text,
   file,
+  pdfInfo,
+  wordStatus,
   error,
   isLoading,
   onModeChange,
   onUrlChange,
+  onTextChange,
   onFileChange,
+  onConvertWord,
 }) {
   const inputId = `article-${side.toLowerCase()}-url`
+  const textId = `article-${side.toLowerCase()}-text`
   const fileId = `article-${side.toLowerCase()}-file`
   const errorId = `article-${side.toLowerCase()}-error`
   const urlHost = getUrlHost(url)
+  const labelTarget =
+    mode === 'url' ? inputId : mode === 'text' ? textId : fileId
 
   return (
     <div className="field-group">
       <div className="field-header">
-        <label htmlFor={mode === 'url' ? inputId : fileId}>
+        <label htmlFor={labelTarget}>
           <span className={`field-number${side === 'B' ? ' field-number--b' : ''}`}>
             {side}
           </span>
@@ -490,7 +633,7 @@ function ArticleSourceField({
         </div>
       </div>
 
-      {mode === 'url' ? (
+      {mode === 'url' && (
         <>
           <input
             className="url-input"
@@ -505,7 +648,29 @@ function ArticleSourceField({
           />
           {urlHost && <p className="input-hint">Source: {urlHost}</p>}
         </>
-      ) : (
+      )}
+
+      {mode === 'text' && (
+        <>
+          <textarea
+            className="text-input"
+            id={textId}
+            value={text}
+            onChange={onTextChange}
+            rows={6}
+            placeholder="Paste the full article text here..."
+            aria-describedby={error ? errorId : undefined}
+            aria-invalid={Boolean(error)}
+            disabled={isLoading}
+          />
+          <p className="input-hint">
+            {text.trim().length} characters. Paste the article body directly —
+            no link needed.
+          </p>
+        </>
+      )}
+
+      {mode === 'upload' && (
         <>
           <label
             className={`file-picker${file ? ' file-picker--selected' : ''}`}
@@ -523,8 +688,16 @@ function ArticleSourceField({
             <span>{file ? file.name : 'Choose a PDF or Word file'}</span>
           </label>
           <p className="input-hint">
-            Use saved articles, paywalled pages, or subscription content.
+            Works with text PDFs, scanned/image PDFs (auto OCR), Word files,
+            paywalled pages, or subscription content.
           </p>
+          <PdfToolbox
+            file={file}
+            pdfInfo={pdfInfo}
+            wordStatus={wordStatus}
+            onConvertWord={onConvertWord}
+            isLoading={isLoading}
+          />
         </>
       )}
 
@@ -562,6 +735,26 @@ function SentenceButton({
     >
       {sentence.text}
     </button>
+  )
+}
+
+function ParagraphBlock({ paragraph, match, isSelected, onSelectMatch }) {
+  if (!match) {
+    return <p className="article-paragraph">{paragraph}</p>
+  }
+
+  return (
+    <p className="article-paragraph">
+      <button
+        className={`comparison-sentence comparison-paragraph comparison-sentence--${match.label}${
+          isSelected ? ' comparison-sentence--selected' : ''
+        }`}
+        type="button"
+        onClick={() => onSelectMatch(match.id)}
+      >
+        {paragraph}
+      </button>
+    </p>
   )
 }
 
@@ -611,13 +804,37 @@ function ArticlePanel({
         <div className="article-copy">
           {article.paragraphs?.map((paragraph, paragraphIndex) => {
             const paragraphSentences = sentencesByParagraph[paragraphIndex] ?? []
+            const hasSentenceMatch = paragraphSentences.some((sentence) =>
+              getMatchForSentence(matches, side, sentence.id),
+            )
 
-            if (paragraphSentences.length === 0) {
-              return <p key={paragraph}>{paragraph}</p>
+            // Demo data highlights individual sentences; the live backend
+            // returns paragraph-chunk-level matches, so we highlight the whole
+            // paragraph in that case.
+            if (!hasSentenceMatch) {
+              const paragraphMatch = getMatchForParagraph(
+                matches,
+                side,
+                paragraphIndex,
+              )
+              const visibleMatch =
+                paragraphMatch && visibleLabels[paragraphMatch.label]
+                  ? paragraphMatch
+                  : null
+
+              return (
+                <ParagraphBlock
+                  key={paragraphIndex}
+                  paragraph={paragraph}
+                  match={visibleMatch}
+                  isSelected={visibleMatch?.id === selectedMatchId}
+                  onSelectMatch={onSelectMatch}
+                />
+              )
             }
 
             return (
-              <p key={paragraph}>
+              <p key={paragraphIndex} className="article-paragraph">
                 {paragraphSentences.map((sentence) => {
                   const match = getMatchForSentence(matches, side, sentence.id)
                   return (
@@ -753,6 +970,8 @@ function ComparisonControls({
                 <strong>Article A</strong>
                 <span>
                   {getSentenceText(articleA, selectedMatch.sentenceAId) ??
+                    getParagraphText(articleA, selectedMatch.aParagraphIndex) ??
+                    selectedMatch.aTextPreview ??
                     'Matched text unavailable.'}
                 </span>
               </div>
@@ -760,6 +979,8 @@ function ComparisonControls({
                 <strong>Article B</strong>
                 <span>
                   {getSentenceText(articleB, selectedMatch.sentenceBId) ??
+                    getParagraphText(articleB, selectedMatch.bParagraphIndex) ??
+                    selectedMatch.bTextPreview ??
                     'Matched text unavailable.'}
                 </span>
               </div>
@@ -781,8 +1002,14 @@ function App() {
   const [articleBMode, setArticleBMode] = useState('url')
   const [articleAUrl, setArticleAUrl] = useState('')
   const [articleBUrl, setArticleBUrl] = useState('')
+  const [articleAText, setArticleAText] = useState('')
+  const [articleBText, setArticleBText] = useState('')
   const [articleAFile, setArticleAFile] = useState(null)
   const [articleBFile, setArticleBFile] = useState(null)
+  const [pdfInfoA, setPdfInfoA] = useState(null)
+  const [pdfInfoB, setPdfInfoB] = useState(null)
+  const [wordStatusA, setWordStatusA] = useState(null)
+  const [wordStatusB, setWordStatusB] = useState(null)
   const [focus, setFocus] = useState('general')
   const [formErrors, setFormErrors] = useState({})
   const [apiErrors, setApiErrors] = useState([])
@@ -795,13 +1022,19 @@ function App() {
   const [activeMobileArticle, setActiveMobileArticle] = useState('A')
   const [usingDemoCopy, setUsingDemoCopy] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  function isSideReady(mode, url, text, file) {
+    if (mode === 'url') {
+      return isValidHttpUrl(url)
+    }
+    if (mode === 'text') {
+      return isValidText(text)
+    }
+    return isValidUpload(file)
+  }
+
   const canCompare =
-    (articleAMode === 'url'
-      ? isValidHttpUrl(articleAUrl)
-      : isValidUpload(articleAFile)) &&
-    (articleBMode === 'url'
-      ? isValidHttpUrl(articleBUrl)
-      : isValidUpload(articleBFile))
+    isSideReady(articleAMode, articleAUrl, articleAText, articleAFile) &&
+    isSideReady(articleBMode, articleBUrl, articleBText, articleBFile)
 
   function loadDemoArticles() {
     const demoMatches = getComparisonMatches(demoArticles.comparison)
@@ -810,8 +1043,14 @@ function App() {
     setArticleBMode('url')
     setArticleAUrl(demoArticles.urls.A)
     setArticleBUrl(demoArticles.urls.B)
+    setArticleAText('')
+    setArticleBText('')
     setArticleAFile(null)
     setArticleBFile(null)
+    setPdfInfoA(null)
+    setPdfInfoB(null)
+    setWordStatusA(null)
+    setWordStatusB(null)
     setFocus('general')
     setFormErrors({})
     setApiErrors([])
@@ -853,6 +1092,20 @@ function App() {
     )
   }
 
+  function handleArticleATextChange(event) {
+    setArticleAText(event.target.value)
+    setFormErrors((currentErrors) =>
+      clearFieldError(currentErrors, 'articleA'),
+    )
+  }
+
+  function handleArticleBTextChange(event) {
+    setArticleBText(event.target.value)
+    setFormErrors((currentErrors) =>
+      clearFieldError(currentErrors, 'articleB'),
+    )
+  }
+
   function handleArticleAModeChange(nextMode) {
     setArticleAMode(nextMode)
     setFormErrors((currentErrors) =>
@@ -867,25 +1120,125 @@ function App() {
     )
   }
 
+  async function detectPdfType(file, setPdfInfo) {
+    if (!isPdfFile(file)) {
+      setPdfInfo(null)
+      return
+    }
+
+    setPdfInfo({ detecting: true })
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await fetch('/api/upload/pdf-type', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        setPdfInfo(null)
+        return
+      }
+
+      setPdfInfo(await response.json())
+    } catch {
+      setPdfInfo(null)
+    }
+  }
+
   function handleArticleAFileChange(event) {
-    setArticleAFile(event.target.files?.[0] ?? null)
+    const file = event.target.files?.[0] ?? null
+    setArticleAFile(file)
+    setWordStatusA(null)
+    setPdfInfoA(null)
     setFormErrors((currentErrors) =>
       clearFieldError(currentErrors, 'articleA'),
     )
+    detectPdfType(file, setPdfInfoA)
   }
 
   function handleArticleBFileChange(event) {
-    setArticleBFile(event.target.files?.[0] ?? null)
+    const file = event.target.files?.[0] ?? null
+    setArticleBFile(file)
+    setWordStatusB(null)
+    setPdfInfoB(null)
     setFormErrors((currentErrors) =>
       clearFieldError(currentErrors, 'articleB'),
     )
+    detectPdfType(file, setPdfInfoB)
   }
 
-  function validateArticleInput(mode, url, file) {
+  async function convertPdfToWord(file, setWordStatus) {
+    if (!isPdfFile(file)) {
+      setWordStatus({
+        state: 'error',
+        message: 'Word conversion is only available for PDF files.',
+      })
+      return
+    }
+
+    setWordStatus({ state: 'loading' })
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await fetch('/api/upload/pdf-to-word', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        let message = 'The PDF could not be converted to Word.'
+        try {
+          const errorPayload = await response.json()
+          const friendly = getFriendlyError(errorPayload?.detail ?? errorPayload)
+          message = `${friendly.title}: ${friendly.message}`
+        } catch {
+          // keep default message
+        }
+        setWordStatus({ state: 'error', message })
+        return
+      }
+
+      const blob = await response.blob()
+      const filename = getDownloadFilename(
+        response.headers.get('Content-Disposition'),
+        `${file.name.replace(/\.pdf$/i, '')}.docx`,
+      )
+
+      const objectUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(objectUrl)
+
+      setWordStatus({
+        state: 'success',
+        message: `Saved "${filename}". Check your downloads folder.`,
+      })
+    } catch (error) {
+      setWordStatus({
+        state: 'error',
+        message: `The PDF could not be converted to Word. ${error.message}`,
+      })
+    }
+  }
+
+  function validateArticleInput(mode, url, text, file) {
     if (mode === 'url') {
       return isValidHttpUrl(url)
         ? ''
         : 'Paste a complete article link beginning with http:// or https://.'
+    }
+
+    if (mode === 'text') {
+      return isValidText(text)
+        ? ''
+        : `Paste at least ${minTextChars} characters of article text.`
     }
 
     if (!file) {
@@ -907,6 +1260,20 @@ function App() {
     const usesUpload = articleAMode === 'upload' || articleBMode === 'upload'
 
     if (!usesUpload) {
+      const body = { focus }
+
+      if (articleAMode === 'text') {
+        body.article_a_text = articleAText.trim()
+      } else {
+        body.article_a_url = articleAUrl.trim()
+      }
+
+      if (articleBMode === 'text') {
+        body.article_b_text = articleBText.trim()
+      } else {
+        body.article_b_url = articleBUrl.trim()
+      }
+
       return {
         endpoint: '/api/compare/stream',
         options: {
@@ -914,11 +1281,7 @@ function App() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            article_a_url: articleAUrl.trim(),
-            article_b_url: articleBUrl.trim(),
-            focus,
-          }),
+          body: JSON.stringify(body),
         },
       }
     }
@@ -928,12 +1291,16 @@ function App() {
 
     if (articleAMode === 'url') {
       formData.append('article_a_url', articleAUrl.trim())
+    } else if (articleAMode === 'text') {
+      formData.append('article_a_text', articleAText.trim())
     } else {
       formData.append('article_a_file', articleAFile)
     }
 
     if (articleBMode === 'url') {
       formData.append('article_b_url', articleBUrl.trim())
+    } else if (articleBMode === 'text') {
+      formData.append('article_b_text', articleBText.trim())
     } else {
       formData.append('article_b_file', articleBFile)
     }
@@ -951,8 +1318,18 @@ function App() {
     event.preventDefault()
 
     const nextFormErrors = {
-      articleA: validateArticleInput(articleAMode, articleAUrl, articleAFile),
-      articleB: validateArticleInput(articleBMode, articleBUrl, articleBFile),
+      articleA: validateArticleInput(
+        articleAMode,
+        articleAUrl,
+        articleAText,
+        articleAFile,
+      ),
+      articleB: validateArticleInput(
+        articleBMode,
+        articleBUrl,
+        articleBText,
+        articleBFile,
+      ),
     }
 
     Object.keys(nextFormErrors).forEach((fieldName) => {
@@ -1140,12 +1517,17 @@ function App() {
                 title="First article"
                 mode={articleAMode}
                 url={articleAUrl}
+                text={articleAText}
                 file={articleAFile}
+                pdfInfo={pdfInfoA}
+                wordStatus={wordStatusA}
                 error={formErrors.articleA}
                 isLoading={isLoading}
                 onModeChange={handleArticleAModeChange}
                 onUrlChange={handleArticleAUrlChange}
+                onTextChange={handleArticleATextChange}
                 onFileChange={handleArticleAFileChange}
+                onConvertWord={() => convertPdfToWord(articleAFile, setWordStatusA)}
               />
 
               <ArticleSourceField
@@ -1153,12 +1535,17 @@ function App() {
                 title="Second article"
                 mode={articleBMode}
                 url={articleBUrl}
+                text={articleBText}
                 file={articleBFile}
+                pdfInfo={pdfInfoB}
+                wordStatus={wordStatusB}
                 error={formErrors.articleB}
                 isLoading={isLoading}
                 onModeChange={handleArticleBModeChange}
                 onUrlChange={handleArticleBUrlChange}
+                onTextChange={handleArticleBTextChange}
                 onFileChange={handleArticleBFileChange}
+                onConvertWord={() => convertPdfToWord(articleBFile, setWordStatusB)}
               />
             </div>
 
