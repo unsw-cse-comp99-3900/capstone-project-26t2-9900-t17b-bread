@@ -70,3 +70,8 @@ class ComparisonResult(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp()
     )
+    
+    review_status: Mapped[str] = mapped_column(
+        String(50), server_default="pending", nullable=False
+    )
+    admin_notes: Mapped[str | None] = mapped_column(Text, nullable=True)

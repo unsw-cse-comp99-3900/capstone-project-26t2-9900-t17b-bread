@@ -41,5 +41,7 @@ CREATE TABLE IF NOT EXISTS public.comparison_results (
     article_b_id INT REFERENCES public.articles(id),
     alignment_matrix JSONB NOT NULL,
     similarity_score NUMERIC(4, 2),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP，
+    review_status VARCHAR(50) DEFAULT 'pending',
+    admin_notes TEXT
 );
