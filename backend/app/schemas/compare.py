@@ -140,6 +140,7 @@ class ComparisonMatch(BaseModel):
 
     a_text_preview: str | None = None
     b_text_preview: str | None = None
+    pair_number: int | None = None
 
 
 class ComparisonResult(BaseModel):

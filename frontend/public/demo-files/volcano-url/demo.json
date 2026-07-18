@@ -1,0 +1,13 @@
+{
+  "id": "url-volcano",
+  "label": "URL",
+  "description": "Iceland volcano coverage",
+  "kind": "url",
+  "focus": "general",
+  "articleA": {
+    "url": "https://www.aljazeera.com/amp/news/2024/1/15/volcano-erupts-in-iceland-sending-lava-into-fishing-town"
+  },
+  "articleB": {
+    "url": "https://www.theguardian.com/world/2024/jan/14/volcano-erupts-near-reykjavik-forcing-evacuation-of-residents"
+  }
+}
