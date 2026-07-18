@@ -52,6 +52,7 @@ class RelationshipClassificationService:
 
             relationships.append(
                 {
+                    "pair_number": None,
                     "a_chunk_id": a_chunk_id,
                     "b_chunk_id": b_chunk_id,
                     "a_chunk_index": mapping.get("a_chunk_index"),
@@ -85,6 +86,13 @@ class RelationshipClassificationService:
                     "b_text_preview": self._preview(text_lookup.get(b_chunk_id, "")),
                 }
             )
+
+        #Number only highlighted relationships
+        pair_number = 1
+        for rel in relationships:
+            if rel["label"] in ("aligned", "partially_aligned", "divergent"):
+                rel["pair_number"] = pair_number
+                pair_number += 1
 
         return relationships
 

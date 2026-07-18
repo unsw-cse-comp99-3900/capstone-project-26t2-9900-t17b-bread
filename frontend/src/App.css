@@ -673,10 +673,10 @@ input[aria-invalid='true'] {
   cursor: pointer;
 }
 
-.comparison-sentence:hover,
 .comparison-sentence--selected {
-  box-shadow: 0 0 0 3px rgba(25, 43, 69, 0.16);
+  box-shadow: 0 0 0 4px rgba(25, 43, 69, 0.45);
 }
+
 
 .article-paragraph {
   margin: 0 0 18px;
@@ -915,6 +915,9 @@ input[aria-invalid='true'] {
 .matched-text span {
   color: #475265;
 }
+
+
+
 
 footer {
   display: flex;

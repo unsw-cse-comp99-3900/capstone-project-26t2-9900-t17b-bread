@@ -96,6 +96,45 @@ async def fetch_html(
 
     return response.text
 
+#clean ads that are directly embedded into articles
+BAD_PATTERNS = [
+    r"recommended stories",
+    r"list of \d+ items",
+    r"list \d+ of \d+",
+    r"more from",
+    r"trending",
+    r"sponsored",
+    r"advertisement",
+    r"related",
+    r"read more",
+    r"watch now",
+    r"breaking news",
+]
+
+import re
+
+def filter_paragraphs(text: str) -> str:
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+    clean = []
+
+    for p in paragraphs:
+        lower = p.lower()
+
+        # remove junk by regex
+        if any(re.search(pattern, lower) for pattern in BAD_PATTERNS):
+            continue
+
+        # remove bullet-style junk
+        if lower.startswith("list ") or lower.startswith("- list"):
+            continue
+
+        # remove very short junk (like "–" or "•")
+        if len(p.split()) < 5:
+            continue
+
+        clean.append(p)
+
+    return "\n\n".join(clean)
 
 def extract_main_content(
     html: str,
@@ -105,7 +144,7 @@ def extract_main_content(
     progress: ProgressTracker | None = None,
 ) -> RawArticle:
     """Extract title, source domain and cleaned body text from raw HTML."""
-    body_text = (
+    raw_body = (
         trafilatura.extract(
             html,
             url=url,
@@ -115,6 +154,10 @@ def extract_main_content(
         )
         or ""
     ).strip()
+
+    #junk filter applied
+    body_text = filter_paragraphs(raw_body)
+
 
     title = None
     try:
