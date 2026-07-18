@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from app.schemas.article import ProcessedArticle
 from app.schemas.progress import ProcessingSummary
 
 
@@ -74,6 +73,41 @@ class StageError(BaseModel):
 
 
 # ---------------------------------------------------------------------
+# Public article response schemas
+# ---------------------------------------------------------------------
+
+
+class ArticleSummaryItem(BaseModel):
+    """One extractive summary sentence returned to the frontend."""
+
+    sentence_id: str | None = None
+    article_ref: str | None = None
+    text: str
+    paragraph_index: int | None = None
+    sentence_index: int | None = None
+    char_start: int | None = None
+    char_end: int | None = None
+    score: float | None = None
+
+
+class CompareArticle(BaseModel):
+    """
+    Clean article payload returned by the comparison endpoint.
+
+    Internal fields such as sentences, paragraph_chunks and embeddings
+    are intentionally excluded.
+    """
+
+    article_ref: str
+    url: str | None = None
+    title: str | None = None
+    source_domain: str | None = None
+    source_type: str | None = None
+    paragraphs: list[str] = Field(default_factory=list)
+    summary: list[ArticleSummaryItem] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------
 # Final comparison result schemas
 # ---------------------------------------------------------------------
 
@@ -85,12 +119,7 @@ class ComparisonSummary(BaseModel):
 
 
 class ComparisonMatch(BaseModel):
-    """
-    Final chunk-level comparison match returned to the frontend.
-
-    The backend compares paragraph chunks, so the frontend should use
-    a_paragraph_index and b_paragraph_index for paragraph-level highlighting.
-    """
+    """Final chunk-level comparison match returned to the frontend."""
 
     id: str
 
@@ -114,9 +143,9 @@ class ComparisonMatch(BaseModel):
 
 
 class ComparisonResult(BaseModel):
-    """Final Sprint 2 comparison result returned to the frontend."""
+    """Final comparison result returned to the frontend."""
 
-    focus: str = "general"
+    focus: ComparisonFocus = ComparisonFocus.GENERAL
     summary: ComparisonSummary = Field(default_factory=ComparisonSummary)
     matches: list[ComparisonMatch] = Field(default_factory=list)
 
@@ -126,7 +155,7 @@ class CompareResponse(BaseModel):
 
     focus: ComparisonFocus
 
-    articles: list[ProcessedArticle] = Field(default_factory=list)
+    articles: list[CompareArticle] = Field(default_factory=list)
 
     errors: list[StageError] = Field(default_factory=list)
 
@@ -151,8 +180,6 @@ class CompareResponse(BaseModel):
 
 # ---------------------------------------------------------------------
 # Legacy Sprint 2 schemas
-# Keep these only if older files such as sprint2_stubs.py still import them.
-# They are not used by the new separated pipeline.
 # ---------------------------------------------------------------------
 
 
