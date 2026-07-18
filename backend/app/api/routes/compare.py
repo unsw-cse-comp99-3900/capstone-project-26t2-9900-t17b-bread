@@ -130,6 +130,7 @@ def _build_frontend_matches(pair_result: PairPipelineResult) -> list[dict[str, A
                 "explanation": _relationship_explanation(relationship),
                 "a_text_preview": relationship.get("a_text_preview"),
                 "b_text_preview": relationship.get("b_text_preview"),
+                "pair_number": relationship.get("pair_number"),
             }
         )
 
