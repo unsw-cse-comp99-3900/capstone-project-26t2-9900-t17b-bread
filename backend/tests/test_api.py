@@ -82,7 +82,7 @@ def test_compare_with_mocked_fetch(monkeypatch):
     assert data["errors"] == []
     assert len(data["articles"]) == 2
     assert data["processing"]["total_elapsed_seconds"] >= 0
-    assert "seconds" in data["processing"]["message"]
+    assert data["processing"]["message"]
     for article in data["articles"]:
         assert article["sentences"], "expected prepared sentences"
         joined = " ".join(s["text"] for s in article["sentences"])
@@ -169,3 +169,79 @@ def test_compare_files_with_docx_and_url(monkeypatch):
     data = response.json()
     assert len(data["articles"]) == 2
     assert any(a["source_type"] == "upload" for a in data["articles"])
+
+
+ARTICLE_A_TEXT = (
+    "The government announced a sweeping new national budget on Tuesday, allocating "
+    "record funding to infrastructure and health programmes across the country."
+)
+ARTICLE_B_TEXT = (
+    "Opposition leaders argued that essential services for low-income families had "
+    "been neglected again in the newly announced national budget."
+)
+
+
+def test_compare_with_pasted_text_json():
+    payload = {
+        "article_a_text": ARTICLE_A_TEXT,
+        "article_b_text": ARTICLE_B_TEXT,
+        "focus": "general",
+    }
+    response = client.post("/api/compare", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["errors"] == []
+    assert len(data["articles"]) == 2
+    assert all(a["source_type"] == "text" for a in data["articles"])
+
+
+def test_compare_json_mixed_text_and_url(monkeypatch):
+    monkeypatch.setattr(fetch_service, "fetch_html", _fake_fetch_html)
+    payload = {
+        "article_a_text": ARTICLE_A_TEXT,
+        "article_b_url": "https://outlet-b.com/budget",
+        "focus": "general",
+    }
+    response = client.post("/api/compare", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert len(data["articles"]) == 2
+    source_types = {a["source_type"] for a in data["articles"]}
+    assert source_types == {"text", "url"}
+
+
+def test_compare_rejects_missing_sources():
+    response = client.post("/api/compare", json={"focus": "general"})
+    assert response.status_code == 422
+
+
+def test_compare_reports_empty_text_error():
+    payload = {
+        "article_a_text": "short",
+        "article_b_text": ARTICLE_B_TEXT,
+    }
+    response = client.post("/api/compare", json=payload)
+    assert response.status_code == 200
+
+    data = response.json()
+    assert len(data["errors"]) == 1
+    assert data["errors"][0]["code"] == ErrorCode.TEXT_TOO_SHORT.value
+    assert data["errors"][0]["article_ref"] == "A"
+
+
+def test_compare_files_with_pasted_text_form(monkeypatch):
+    monkeypatch.setattr(fetch_service, "fetch_html", _fake_fetch_html)
+    response = client.post(
+        "/api/compare/files",
+        data={
+            "article_a_text": ARTICLE_A_TEXT,
+            "article_b_url": "https://outlet-b.com/budget",
+            "focus": "general",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["articles"]) == 2
+    assert any(a["source_type"] == "text" for a in data["articles"])

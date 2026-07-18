@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.progress import ProcessingSummary
 
@@ -21,25 +21,45 @@ class ComparisonFocus(str, Enum):
 
 
 class CompareRequest(BaseModel):
-    """Request to run the article-processing and comparison pipeline."""
+    """Request to run the article-processing and comparison pipeline.
+
+    Each article can be provided either as a URL or as pasted text. When both
+    are given for one article, the pasted text takes priority.
+    """
 
     article_a_url: str | None = Field(
-        default=None,
-        description="HTTP/HTTPS URL of article A.",
+        default=None, description="HTTP/HTTPS URL of article A."
     )
     article_b_url: str | None = Field(
-        default=None,
-        description="HTTP/HTTPS URL of article B.",
+        default=None, description="HTTP/HTTPS URL of article B."
     )
     article_a_text: str | None = Field(
-        default=None,
-        description="Pasted plain-text body for article A.",
+        default=None, description="Pasted plain-text body for article A."
     )
     article_b_text: str | None = Field(
-        default=None,
-        description="Pasted plain-text body for article B.",
+        default=None, description="Pasted plain-text body for article B."
     )
     focus: ComparisonFocus = ComparisonFocus.GENERAL
+
+    @model_validator(mode="after")
+    def _require_a_source_per_article(self) -> CompareRequest:
+        """Ensure each article has at least a URL or pasted text."""
+
+        if not (self.article_a_url or "").strip() and not (
+            self.article_a_text or ""
+        ).strip():
+            raise ValueError(
+                "Article A is missing. Provide article_a_url or article_a_text."
+            )
+
+        if not (self.article_b_url or "").strip() and not (
+            self.article_b_text or ""
+        ).strip():
+            raise ValueError(
+                "Article B is missing. Provide article_b_url or article_b_text."
+            )
+
+        return self
 
 
 class StageError(BaseModel):

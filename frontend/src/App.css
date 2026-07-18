@@ -291,6 +291,99 @@ input[type='file'] {
   white-space: nowrap;
 }
 
+.text-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 132px;
+  padding: 12px 15px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  outline: none;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.text-input:focus {
+  border-color: var(--orange);
+  box-shadow: 0 0 0 4px rgba(226, 112, 46, 0.12);
+}
+
+.text-input[aria-invalid='true'] {
+  border-color: #c94343;
+}
+
+.pdf-toolbox {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fbfaf7;
+}
+
+.pdf-type-badge {
+  margin: 0;
+  padding: 5px 10px;
+  border-radius: 999px;
+  align-self: flex-start;
+  background: rgba(25, 43, 69, 0.08);
+  color: var(--navy);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pdf-type-badge--image {
+  background: rgba(226, 112, 46, 0.14);
+  color: var(--orange-dark);
+}
+
+.input-hint--warn {
+  color: #ad3030;
+}
+
+.input-hint--success {
+  color: #1f7a43;
+}
+
+.word-download-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--navy);
+  border-radius: 10px;
+  color: var(--navy);
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.word-download-button:hover:not(:disabled) {
+  background: var(--navy);
+  color: #fff;
+}
+
+.word-download-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 select {
   min-width: 210px;
   min-height: 45px;
@@ -583,6 +676,18 @@ input[aria-invalid='true'] {
 .comparison-sentence:hover,
 .comparison-sentence--selected {
   box-shadow: 0 0 0 3px rgba(25, 43, 69, 0.16);
+}
+
+.article-paragraph {
+  margin: 0 0 18px;
+}
+
+.comparison-paragraph {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  cursor: pointer;
 }
 
 .comparison-sentence--aligned {

@@ -255,21 +255,26 @@ def _build_compare_response(
 async def _build_article_input(
     article_ref: str,
     url: str | None,
+    text: str | None,
     upload: UploadFile | None,
 ) -> ArticleInput:
-    """Build ArticleInput from either URL or uploaded file."""
+    """Build ArticleInput from a URL, pasted text, or an uploaded file."""
 
     url_value = (url or "").strip()
+    text_value = (text or "").strip()
     has_file = upload is not None and upload.filename
 
-    if url_value and has_file:
+    provided = sum(1 for value in (url_value, text_value, has_file) if value)
+
+    if provided > 1:
         raise ValueError(
-            f"Provide either a URL or a file for article {article_ref}, not both."
+            f"Provide only one of URL, text, or file for article {article_ref}."
         )
 
-    if not url_value and not has_file:
+    if provided == 0:
         raise ValueError(
-            f"Article {article_ref} is missing. Provide a URL or upload a PDF/Word file."
+            f"Article {article_ref} is missing. Provide a URL, pasted text, "
+            "or upload a PDF/Word file."
         )
 
     if has_file:
@@ -280,26 +285,38 @@ async def _build_article_input(
             article_ref,
         )
 
+    if text_value:
+        return ArticleInput.from_text(
+            text_value,
+            article_ref,
+        )
+
     return ArticleInput.from_url(
         url_value,
         article_ref,
     )
 
 
-def _build_url_article_inputs(payload: CompareRequest) -> tuple[ArticleInput, ArticleInput]:
-    """Build ArticleInput objects from the URL-only JSON payload."""
+def _build_json_article_inputs(payload: CompareRequest) -> tuple[ArticleInput, ArticleInput]:
+    """Build ArticleInput objects from the JSON payload (URL or pasted text)."""
 
-    article_a = ArticleInput.from_url(
-        payload.article_a_url,
-        "A",
+    return (
+        _build_json_article_input("A", payload.article_a_url, payload.article_a_text),
+        _build_json_article_input("B", payload.article_b_url, payload.article_b_text),
     )
 
-    article_b = ArticleInput.from_url(
-        payload.article_b_url,
-        "B",
-    )
 
-    return article_a, article_b
+def _build_json_article_input(
+    article_ref: str,
+    url: str | None,
+    text: str | None,
+) -> ArticleInput:
+    """Prefer pasted text over URL for one article in a JSON request."""
+
+    if (text or "").strip():
+        return ArticleInput.from_text(text, article_ref)
+
+    return ArticleInput.from_url(url, article_ref)
 
 
 async def _run_compare_inputs(
@@ -330,12 +347,16 @@ async def _run_compare_inputs(
     )
 
 
-@router.post("", response_model=CompareResponse, summary="Compare a pair of article URLs")
+@router.post(
+    "",
+    response_model=CompareResponse,
+    summary="Compare a pair of articles from URLs and/or pasted text",
+)
 async def compare(
     payload: CompareRequest,
 ) -> CompareResponse:
     """
-    URL-only comparison.
+    URL and/or pasted-text comparison.
 
     Request type:
     JSON
@@ -344,7 +365,7 @@ async def compare(
     normal JSON
     """
 
-    article_a, article_b = _build_url_article_inputs(payload)
+    article_a, article_b = _build_json_article_inputs(payload)
 
     progress = ProgressTracker(name="compare")
 
@@ -356,12 +377,15 @@ async def compare(
     )
 
 
-@router.post("/stream", summary="Compare two URLs with live English progress (SSE)")
+@router.post(
+    "/stream",
+    summary="Compare two articles (URL and/or pasted text) with live English progress (SSE)",
+)
 async def compare_stream(
     payload: CompareRequest,
 ):
     """
-    URL-only comparison.
+    URL and/or pasted-text comparison.
 
     Request type:
     JSON
@@ -379,7 +403,7 @@ async def compare_stream(
 
     async def runner() -> dict:
         try:
-            article_a, article_b = _build_url_article_inputs(payload)
+            article_a, article_b = _build_json_article_inputs(payload)
 
             response = await _run_compare_inputs(
                 article_a,
@@ -401,17 +425,19 @@ async def compare_stream(
 @router.post(
     "/files",
     response_model=CompareResponse,
-    summary="Compare two articles from URLs and/or uploaded PDF/Word files",
+    summary="Compare two articles from URLs, pasted text, and/or uploaded PDF/Word files",
 )
 async def compare_files(
     article_a_url: str | None = Form(default=None),
     article_b_url: str | None = Form(default=None),
+    article_a_text: str | None = Form(default=None),
+    article_b_text: str | None = Form(default=None),
     article_a_file: UploadFile | None = File(default=None),
     article_b_file: UploadFile | None = File(default=None),
     focus: ComparisonFocus = Form(default=ComparisonFocus.GENERAL),
 ) -> CompareResponse:
     """
-    Mixed URL/file comparison.
+    Mixed URL / pasted-text / file comparison.
 
     Request type:
     multipart/form-data
@@ -424,12 +450,14 @@ async def compare_files(
         article_a = await _build_article_input(
             "A",
             article_a_url,
+            article_a_text,
             article_a_file,
         )
 
         article_b = await _build_article_input(
             "B",
             article_b_url,
+            article_b_text,
             article_b_file,
         )
 
@@ -451,17 +479,19 @@ async def compare_files(
 
 @router.post(
     "/files/stream",
-    summary="Compare mixed URL/file inputs with live English progress (SSE)",
+    summary="Compare mixed URL / pasted-text / file inputs with live English progress (SSE)",
 )
 async def compare_files_stream(
     article_a_url: str | None = Form(default=None),
     article_b_url: str | None = Form(default=None),
+    article_a_text: str | None = Form(default=None),
+    article_b_text: str | None = Form(default=None),
     article_a_file: UploadFile | None = File(default=None),
     article_b_file: UploadFile | None = File(default=None),
     focus: ComparisonFocus = Form(default=ComparisonFocus.GENERAL),
 ):
     """
-    Mixed URL/file comparison.
+    Mixed URL / pasted-text / file comparison.
 
     Request type:
     multipart/form-data
@@ -474,12 +504,14 @@ async def compare_files_stream(
         article_a = await _build_article_input(
             "A",
             article_a_url,
+            article_a_text,
             article_a_file,
         )
 
         article_b = await _build_article_input(
             "B",
             article_b_url,
+            article_b_text,
             article_b_file,
         )
 

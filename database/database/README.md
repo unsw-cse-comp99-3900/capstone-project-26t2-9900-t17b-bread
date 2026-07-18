@@ -1,11 +1,11 @@
-# Database Subsystem (Sprint 1)
+# Database Subsystem
 This directory contains the database initialization script for **PostgreSQL 17**.
 
 ## Files
 * **`init_db.sql`**: The SQL script to create tables, constraints, and indexes.
 * **`README.md`**: This documentation file.
 
-## Database Schema
+## Database Schema (Sprint 1 Baseline)
 ### 1. `articles` Table
 * **Purpose**: Stores cleaned news titles, domains, and main body text.
 * **Optimization**: The `url` field is set to `UNIQUE` to prevent duplicate indexing, with a B-Tree index for fast lookups.
@@ -13,6 +13,15 @@ This directory contains the database initialization script for **PostgreSQL 17**
 ### 2. `user_sessions` Table
 * **Purpose**: Stores user session tokens and the history of compared article URLs.
 * **Optimization**: Indexed by `session_token` to quickly fetch history for the frontend.
+
+## Database Schema Updates (Sprint 2 Changes)
+### 3. `embeddings_collection` Table
+* **Purpose**: Stores semantic vector embeddings for news article sentences to support NLP alignment.
+* **Optimization**: Uses native PostgreSQL `FLOAT8[]` arrays to store embedding vectors efficiently.
+
+### 4. `comparison_results` Table
+* **Purpose**: Stores cross-mapping alignment matrices, similarity scores, and administrative review tracks (`review_status`, `admin_notes`) to pre-configure future content auditing capabilities.
+* **Optimization**: Uses the `JSONB` data type for flexible and high-performance storage of the alignment matrix.
 
 ## Backend Connection Guide (FastAPI / SQLAlchemy)
 

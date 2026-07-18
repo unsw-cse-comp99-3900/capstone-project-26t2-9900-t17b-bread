@@ -23,6 +23,8 @@ class ErrorCode(str, Enum):
     URL_INVALID_SCHEME = "url_invalid_scheme"
     URL_MISSING_HOST = "url_missing_host"
     INPUT_MISSING = "input_missing"
+    TEXT_EMPTY = "text_empty"
+    TEXT_TOO_SHORT = "text_too_short"
 
     # Fetch / network
     FETCH_TIMEOUT = "fetch_timeout"
@@ -47,6 +49,12 @@ class ErrorCode(str, Enum):
     UPLOAD_PARSE_FAILED = "upload_parse_failed"
     UPLOAD_EMPTY_DOCUMENT = "upload_empty_document"
 
+    # OCR (scanned / image PDFs)
+    OCR_UNAVAILABLE = "ocr_unavailable"
+    OCR_FAILED = "ocr_failed"
+    OCR_NO_TEXT_FOUND = "ocr_no_text_found"
+    PDF_NOT_IMAGE_BASED = "pdf_not_image_based"
+
     # Generic
     UNKNOWN = "unknown"
 
@@ -62,7 +70,13 @@ ERROR_MESSAGES: dict[ErrorCode, str] = {
         "The URL is missing a host name. Example: https://www.example.com/article"
     ),
     ErrorCode.INPUT_MISSING: (
-        "No article source was provided. Supply either a URL or an uploaded PDF/Word file."
+        "No article source was provided. Supply a URL, pasted text, or an uploaded PDF/Word file."
+    ),
+    ErrorCode.TEXT_EMPTY: (
+        "The pasted article text is empty. Please paste the article content before comparing."
+    ),
+    ErrorCode.TEXT_TOO_SHORT: (
+        "The pasted article text is too short to analyse. Please paste the full article content."
     ),
     ErrorCode.FETCH_TIMEOUT: (
         "The request timed out while downloading the article. The website may be slow or unreachable."
@@ -117,6 +131,22 @@ ERROR_MESSAGES: dict[ErrorCode, str] = {
     ),
     ErrorCode.UPLOAD_EMPTY_DOCUMENT: (
         "The uploaded document contains no readable text. Please check the file and try again."
+    ),
+    ErrorCode.OCR_UNAVAILABLE: (
+        "OCR is not available on the server. The Tesseract OCR engine is required to read "
+        "image-based (scanned) PDFs. Please install Tesseract, or upload a text-based PDF/Word file."
+    ),
+    ErrorCode.OCR_FAILED: (
+        "The scanned PDF could not be recognised by OCR. The scan quality may be too low. "
+        "Please try a clearer scan or a text-based document."
+    ),
+    ErrorCode.OCR_NO_TEXT_FOUND: (
+        "OCR ran but found no usable text in this image-based PDF. "
+        "The pages may be blank, photos, or too low quality to read."
+    ),
+    ErrorCode.PDF_NOT_IMAGE_BASED: (
+        "This PDF already contains selectable text, so image OCR is not needed. "
+        "Use the standard upload to extract its text directly."
     ),
     ErrorCode.UNKNOWN: (
         "An unexpected error occurred while processing the article. Please try again."

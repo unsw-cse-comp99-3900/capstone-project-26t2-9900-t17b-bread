@@ -38,6 +38,7 @@ class EmbeddingService:
 
         if not valid_chunks:
             return []
+    
 
         texts = [chunk["text"] for chunk in valid_chunks]
 
@@ -71,9 +72,40 @@ class EmbeddingService:
             )
 
         return results
+    
+    def encode_sentences(
+        self,
+        sentences: list[str],
+    ) -> list[list[float]]:
+        """
+        Encode a list of sentences using the shared SBERT model.
+        """
+
+        cleaned = [
+            " ".join(sentence.split()).strip()
+            for sentence in sentences
+            if sentence.strip()
+        ]
+
+        if not cleaned:
+            return []
+
+        embeddings = self.model.encode(
+            cleaned,
+            batch_size=16,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+
+        return embeddings.tolist()
+    
+    
+    
 
 
 @lru_cache(maxsize=1)
 def get_embedding_service() -> EmbeddingService:
     """Load the SBERT model once and reuse it across backend calls."""
     return EmbeddingService()
+
