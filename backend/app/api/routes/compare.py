@@ -52,78 +52,6 @@ def _build_stage_error(result: ArticleResult) -> dict[str, Any] | None:
     }
 
 
-def _build_nlp_debug(result: ArticleResult) -> dict[str, Any] | None:
-    """
-    Build lightweight NLP debug information.
-
-    This does not return full embedding vectors.
-    """
-
-    if not result.ok:
-        return None
-
-    paragraph_chunks = result.paragraph_chunks or []
-    chunk_embeddings = result.chunk_embeddings or []
-
-    chunks: list[dict[str, Any]] = []
-
-    for chunk in paragraph_chunks:
-        text = str(chunk.get("text", "")).strip()
-
-        chunks.append(
-            {
-                "chunk_id": chunk.get("chunk_id"),
-                "article_ref": chunk.get("article_ref", result.article_ref),
-                "chunk_type": chunk.get("chunk_type", "paragraph"),
-                "chunk_index": chunk.get("chunk_index"),
-                "paragraph_index": chunk.get("paragraph_index"),
-                "text_preview": text[:200],
-                "word_count": chunk.get("word_count"),
-                "sentence_ids": chunk.get("sentence_ids", []),
-                "char_start": chunk.get("char_start"),
-                "char_end": chunk.get("char_end"),
-            }
-        )
-
-    embeddings: list[dict[str, Any]] = []
-
-    for item in chunk_embeddings:
-        vector = item.get("embedding") or []
-
-        if not isinstance(vector, list):
-            vector = []
-
-        dimension = item.get("dimension")
-        vector_length = len(vector)
-
-        embeddings.append(
-            {
-                "chunk_id": item.get("chunk_id"),
-                "article_ref": item.get("article_ref", result.article_ref),
-                "model_name": item.get("model_name"),
-                "dimension": dimension,
-                "vector_length": vector_length,
-                "vector_preview": vector[:5],
-                "ok": vector_length > 0 and dimension == vector_length,
-            }
-        )
-
-    embedding_ready = (
-        len(paragraph_chunks) > 0
-        and len(paragraph_chunks) == len(chunk_embeddings)
-        and all(item["ok"] for item in embeddings)
-    )
-
-    return {
-        "article_ref": result.article_ref,
-        "chunk_count": len(paragraph_chunks),
-        "embedding_count": len(chunk_embeddings),
-        "embedding_ready": embedding_ready,
-        "chunks": chunks,
-        "embeddings": embeddings,
-    }
-
-
 def _relationship_explanation(relationship: dict[str, Any]) -> str:
     """Create a simple explanation for frontend display."""
 
@@ -230,6 +158,46 @@ def _build_comparison_payload(pair_result: PairPipelineResult) -> dict[str, Any]
         "matches": matches,
     }
 
+def _build_frontend_article(result: ArticleResult) -> dict[str, Any] | None:
+    """
+    Convert internal ArticleResult into a clean frontend article payload.
+
+    Internal fields such as sentences, paragraph_chunks and embeddings
+    are intentionally excluded.
+    """
+
+    article = result.article
+
+    if article is None:
+        return None
+
+    # Support both Pydantic objects and dictionaries.
+    if isinstance(article, dict):
+        article_ref = article.get("article_ref", result.article_ref)
+        url = article.get("url", result.url)
+        title = article.get("title")
+        source_domain = article.get("source_domain")
+        source_type = article.get("source_type")
+        paragraphs = article.get("paragraphs", [])
+        summary = article.get("summary", [])
+    else:
+        article_ref = getattr(article, "article_ref", result.article_ref)
+        url = getattr(article, "url", result.url)
+        title = getattr(article, "title", None)
+        source_domain = getattr(article, "source_domain", None)
+        source_type = getattr(article, "source_type", None)
+        paragraphs = getattr(article, "paragraphs", [])
+        summary = getattr(article, "summary", [])
+
+    return {
+        "article_ref": article_ref,
+        "url": url,
+        "title": title,
+        "source_domain": source_domain,
+        "source_type": source_type,
+        "paragraphs": paragraphs or [],
+        "summary": summary or [],
+    }
 
 def _build_compare_response(
     *,
@@ -243,9 +211,9 @@ def _build_compare_response(
     article_results = pair_result.articles
 
     articles = [
-        result.article
+        article_payload
         for result in article_results
-        if result.article is not None
+        if (article_payload := _build_frontend_article(result)) is not None
     ]
 
     errors = [
@@ -269,10 +237,10 @@ def _build_compare_response(
             final_message="Comparison finished."
         )
 
-        if "progress" in supported_fields:
-            response_data["progress"] = progress_summary
-        elif "processing" in supported_fields:
+        if "processing" in supported_fields:
             response_data["processing"] = progress_summary
+        elif "progress" in supported_fields:
+            response_data["progress"] = progress_summary
 
     if supported_fields:
         response_data = {
