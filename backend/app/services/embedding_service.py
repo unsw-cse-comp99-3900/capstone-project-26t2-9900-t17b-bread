@@ -7,6 +7,13 @@ from typing import Any
 
 DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
+import torch
+
+#security checks for macs with gpu
+if torch.backends.mps.is_available():
+    print("⚠️ MPS detected — disabling to prevent crashes.")
+    torch.backends.mps.is_available = lambda: False
+    torch.backends.mps.is_built = lambda: False
 
 class EmbeddingService:
     """SBERT-based embedding service for paragraph chunks."""
