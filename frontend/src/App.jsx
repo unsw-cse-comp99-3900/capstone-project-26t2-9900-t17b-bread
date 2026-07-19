@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
 
 const focusOptions = [
@@ -24,143 +24,7 @@ const articleInputModes = [
 const maxUploadSizeBytes = 10 * 1024 * 1024
 const minTextChars = 20
 
-const demoArticles = {
-  urls: {
-    A: 'https://www.aljazeera.com/news/2024/11/28/australia-passes-legislation-banning-under-16s-from-social-media',
-    B: 'https://www.abc.net.au/news/2024-11-29/meta-snapchat-tiktok-respond-to-australian-social-media-ban/104664478',
-  },
-  articles: [
-    {
-      article_ref: 'A',
-      title: 'Australia passes legislation banning under-16s from social media',
-      source_domain: 'aljazeera.com',
-      url: 'https://www.aljazeera.com/news/2024/11/28/australia-passes-legislation-banning-under-16s-from-social-media',
-      paragraphs: [
-        'Australia passed legislation banning children aged under 16 from using social media, creating one of the world’s strictest rules for online platforms.',
-        'The law requires companies such as Instagram, Facebook and TikTok to prevent under-16s from holding accounts or face large financial penalties.',
-        'Prime Minister Anthony Albanese argued that the measure would help protect young people from peer pressure, anxiety, scammers and online predators.',
-        'Critics warned that the ban could limit support networks for vulnerable teenagers and raise privacy concerns around age verification.',
-      ],
-      sentences: [
-        {
-          id: 'A-0',
-          article_ref: 'A',
-          text: 'Australia passed legislation banning children aged under 16 from using social media, creating one of the world鈥檚 strictest rules for online platforms.',
-          paragraph_index: 0,
-          sentence_index: 0,
-          char_start: 0,
-          char_end: 132,
-        },
-        {
-          id: 'A-1',
-          article_ref: 'A',
-          text: 'The law requires companies such as Instagram, Facebook and TikTok to prevent under-16s from holding accounts or face large financial penalties.',
-          paragraph_index: 1,
-          sentence_index: 1,
-          char_start: 133,
-          char_end: 269,
-        },
-        {
-          id: 'A-2',
-          article_ref: 'A',
-          text: 'Prime Minister Anthony Albanese argued that the measure would help protect young people from peer pressure, anxiety, scammers and online predators.',
-          paragraph_index: 2,
-          sentence_index: 2,
-          char_start: 270,
-          char_end: 410,
-        },
-        {
-          id: 'A-3',
-          article_ref: 'A',
-          text: 'Critics warned that the ban could limit support networks for vulnerable teenagers and raise privacy concerns around age verification.',
-          paragraph_index: 3,
-          sentence_index: 3,
-          char_start: 411,
-          char_end: 531,
-        },
-      ],
-    },
-    {
-      article_ref: 'B',
-      title:
-        "Tech companies respond to Australia's social media ban for under-16s",
-      source_domain: 'abc.net.au',
-      url: 'https://www.abc.net.au/news/2024-11-29/meta-snapchat-tiktok-respond-to-australian-social-media-ban/104664478',
-      paragraphs: [
-        'Major technology companies responded with concern after Australia approved new laws banning children and young teenagers from social media.',
-        'Meta, Snapchat and TikTok said they were disappointed by the legislation and raised questions about how the rules would be implemented.',
-        'The companies said they supported online safety but argued that the government needed clearer guidance on age assurance and enforcement.',
-        'The law will not take effect immediately, giving platforms and regulators time to work through technical compliance details.',
-      ],
-      sentences: [
-        {
-          id: 'B-0',
-          article_ref: 'B',
-          text: 'Major technology companies responded with concern after Australia approved new laws banning children and young teenagers from social media.',
-          paragraph_index: 0,
-          sentence_index: 0,
-          char_start: 0,
-          char_end: 128,
-        },
-        {
-          id: 'B-1',
-          article_ref: 'B',
-          text: 'Meta, Snapchat and TikTok said they were disappointed by the legislation and raised questions about how the rules would be implemented.',
-          paragraph_index: 1,
-          sentence_index: 1,
-          char_start: 129,
-          char_end: 257,
-        },
-        {
-          id: 'B-2',
-          article_ref: 'B',
-          text: 'The companies said they supported online safety but argued that the government needed clearer guidance on age assurance and enforcement.',
-          paragraph_index: 2,
-          sentence_index: 2,
-          char_start: 258,
-          char_end: 383,
-        },
-        {
-          id: 'B-3',
-          article_ref: 'B',
-          text: 'The law will not take effect immediately, giving platforms and regulators time to work through technical compliance details.',
-          paragraph_index: 3,
-          sentence_index: 3,
-          char_start: 384,
-          char_end: 495,
-        },
-      ],
-    },
-  ],
-  comparison: {
-    matches: [
-      {
-        sentence_a_id: 'A-0',
-        sentence_b_id: 'B-0',
-        label: 'aligned',
-        score: 0.91,
-        explanation:
-          'Both sections describe the same core event: Australia approving a social media ban for young users.',
-      },
-      {
-        sentence_a_id: 'A-1',
-        sentence_b_id: 'B-1',
-        label: 'partially_aligned',
-        score: 0.73,
-        explanation:
-          'Both sections discuss platform obligations, but article A emphasises penalties while article B emphasises company concerns about implementation.',
-      },
-      {
-        sentence_a_id: 'A-2',
-        sentence_b_id: 'B-2',
-        label: 'divergent',
-        score: 0.48,
-        explanation:
-          'Article A frames the measure through government protection claims, while article B foregrounds technology companies asking for clearer rules.',
-      },
-    ],
-  },
-}
+const demoIndexPath = '/demo-files/index.json'
 
 const friendlyErrorMessages = {
   url_missing: {
@@ -338,12 +202,112 @@ function getDownloadFilename(contentDisposition, fallback) {
   return plainMatch ? plainMatch[1] : fallback
 }
 
+function downloadJsonFile(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json',
+  })
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = filename
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(objectUrl)
+}
+
+async function createFileFromDemoAsset({ filePath, fileName, mimeType }) {
+  const response = await fetch(filePath)
+
+  if (!response.ok) {
+    throw new Error(`Could not load ${fileName}.`)
+  }
+
+  const blob = await response.blob()
+  return new File([blob], fileName, { type: mimeType })
+}
+
+async function readTextDemoAsset({ filePath }) {
+  const response = await fetch(filePath)
+
+  if (!response.ok) {
+    throw new Error(`Could not load ${filePath}.`)
+  }
+
+  return response.text()
+}
+
 function getUrlHost(value) {
   try {
     return new URL(value.trim()).hostname.replace(/^www\./, '')
   } catch {
     return ''
   }
+}
+
+function isUploadedArticle(article) {
+  return article?.source_type === 'upload' || article?.url?.startsWith('upload://')
+}
+
+function getUploadFileName(article) {
+  if (!article?.url?.startsWith('upload://')) {
+    return ''
+  }
+
+  try {
+    return decodeURIComponent(article.url.replace('upload://', ''))
+  } catch {
+    return article.url.replace('upload://', '')
+  }
+}
+
+function getFileStem(fileName) {
+  return fileName.replace(/\.[^.]+$/, '').trim()
+}
+
+function getUploadedDocumentTitle(fileName) {
+  const extension = fileName.split('.').pop()?.toLowerCase()
+
+  if (extension === 'pdf') {
+    return 'Uploaded PDF document'
+  }
+
+  if (extension === 'docx') {
+    return 'Uploaded Word document'
+  }
+
+  return 'Uploaded document'
+}
+
+function isWeakUploadTitle(title, fileName) {
+  const normalizedTitle = (title ?? '').trim().toLowerCase()
+  const normalizedStem = getFileStem(fileName).toLowerCase()
+
+  return (
+    !normalizedTitle ||
+    normalizedTitle === '(anonymous)' ||
+    normalizedTitle === 'anonymous' ||
+    normalizedTitle === 'untitled article' ||
+    normalizedTitle === normalizedStem
+  )
+}
+
+function getArticleDisplayTitle(article) {
+  if (!isUploadedArticle(article)) {
+    return article?.title ?? 'Untitled article'
+  }
+
+  const fileName = getUploadFileName(article)
+
+  if (isWeakUploadTitle(article?.title, fileName)) {
+    return getUploadedDocumentTitle(fileName)
+  }
+
+  return article.title
+}
+
+function hasExternalArticleUrl(article) {
+  return /^https?:\/\//.test(article?.url ?? '')
 }
 
 function getFocusLabel(focusValue) {
@@ -387,6 +351,28 @@ function normalizeLabel(label) {
 
 function normalizeMatch(match, index) {
   const label = normalizeLabel(match.label ?? match.relationship)
+  const paragraphAIndex =
+    match.a_paragraph_index ??
+    match.aParagraphIndex ??
+    match.article_a_paragraph_index ??
+    match.paragraph_a_index ??
+    match.left_paragraph_index
+  const paragraphBIndex =
+    match.b_paragraph_index ??
+    match.bParagraphIndex ??
+    match.article_b_paragraph_index ??
+    match.paragraph_b_index ??
+    match.right_paragraph_index
+  const chunkAId =
+    match.a_chunk_id ??
+    match.article_a_chunk_id ??
+    match.chunk_a_id ??
+    match.left_chunk_id
+  const chunkBId =
+    match.b_chunk_id ??
+    match.article_b_chunk_id ??
+    match.chunk_b_id ??
+    match.right_chunk_id
   const sentenceAId =
     match.sentence_a_id ??
     match.article_a_sentence_id ??
@@ -398,13 +384,20 @@ function normalizeMatch(match, index) {
     match.b_sentence_id ??
     match.right_sentence_id
 
-  const aParagraphIndex = match.a_paragraph_index ?? match.aParagraphIndex ?? null
-  const bParagraphIndex = match.b_paragraph_index ?? match.bParagraphIndex ?? null
+  const aParagraphIndex = paragraphAIndex ?? null
+  const bParagraphIndex = paragraphBIndex ?? null
 
   return {
     ...match,
-    id: match.id ?? `${sentenceAId ?? 'A'}-${sentenceBId ?? 'B'}-${index}`,
+    id:
+      match.id ??
+      `${chunkAId ?? sentenceAId ?? 'A'}-${chunkBId ?? sentenceBId ?? 'B'}-${index}`,
     label,
+    paragraphAIndex,
+    paragraphBIndex,
+    chunkAId,
+    chunkBId,
+    pairNumber: match.pair_number ?? match.pairNumber ?? index + 1,
     sentenceAId,
     sentenceBId,
     aParagraphIndex,
@@ -423,19 +416,20 @@ function getComparisonMatches(comparison) {
   )
 }
 
+function getMatchForParagraph(matches, side, paragraphIndex) {
+  return matches.find((match) =>
+    side === 'A'
+      ? match.paragraphAIndex === paragraphIndex
+      : match.paragraphBIndex === paragraphIndex,
+  )
+}
+
 function getMatchForSentence(matches, side, sentenceId) {
   return matches.find((match) =>
     side === 'A'
       ? match.sentenceAId === sentenceId
       : match.sentenceBId === sentenceId,
   )
-}
-
-function getMatchForParagraph(matches, side, paragraphIndex) {
-  return matches.find((match) => {
-    const index = side === 'A' ? match.aParagraphIndex : match.bParagraphIndex
-    return index != null && index === paragraphIndex
-  })
 }
 
 function getSentenceText(article, sentenceId) {
@@ -447,6 +441,19 @@ function getParagraphText(article, paragraphIndex) {
     return undefined
   }
   return article?.paragraphs?.[paragraphIndex]
+}
+
+function getMatchedText(article, match, side) {
+  const preview = side === 'A' ? match.aTextPreview : match.bTextPreview
+  const paragraphIndex =
+    side === 'A' ? match.paragraphAIndex : match.paragraphBIndex
+  const sentenceId = side === 'A' ? match.sentenceAId : match.sentenceBId
+
+  return (
+    preview ??
+    getParagraphText(article, paragraphIndex) ??
+    getSentenceText(article, sentenceId)
+  )
 }
 
 function getCompareReadinessMessage(canCompare, isLoading) {
@@ -710,6 +717,33 @@ function ArticleSourceField({
   )
 }
 
+function HighlightedParagraph({
+  paragraph,
+  match,
+  isVisible,
+  isSelected,
+  onSelectMatch,
+}) {
+  if (!isVisible) {
+    return null
+  }
+
+  return (
+    <button
+      className={`comparison-highlight comparison-highlight--${match.label}${
+        isSelected ? ' comparison-highlight--selected' : ''
+      }`}
+      type="button"
+      onClick={() => onSelectMatch(match.id)}
+      onFocus={() => onSelectMatch(match.id)}
+      onMouseEnter={() => onSelectMatch(match.id)}
+    >
+      <span className="comparison-highlight__number">{match.pairNumber}</span>
+      <span>{paragraph}</span>
+    </button>
+  )
+}
+
 function SentenceButton({
   sentence,
   match,
@@ -721,20 +755,14 @@ function SentenceButton({
     return <span>{sentence.text} </span>
   }
 
-  if (!isVisible) {
-    return null
-  }
-
   return (
-    <button
-      className={`comparison-sentence comparison-sentence--${match.label}${
-        isSelected ? ' comparison-sentence--selected' : ''
-      }`}
-      type="button"
-      onClick={() => onSelectMatch(match.id)}
-    >
-      {sentence.text}
-    </button>
+    <HighlightedParagraph
+      paragraph={sentence.text}
+      match={match}
+      isVisible={isVisible}
+      isSelected={isSelected}
+      onSelectMatch={onSelectMatch}
+    />
   )
 }
 
@@ -746,8 +774,8 @@ function ParagraphBlock({ paragraph, match, isSelected, onSelectMatch }) {
   return (
     <p className="article-paragraph">
       <button
-        className={`comparison-sentence comparison-paragraph comparison-sentence--${match.label}${
-          isSelected ? ' comparison-sentence--selected' : ''
+        className={`comparison-highlight comparison-paragraph comparison-highlight--${match.label}${
+          isSelected ? ' comparison-highlight--selected' : ''
         }`}
         type="button"
         onClick={() => onSelectMatch(match.id)}
@@ -769,6 +797,9 @@ function ArticlePanel({
   onSelectMatch,
 }) {
   if (article) {
+    const displayTitle = getArticleDisplayTitle(article)
+    const uploadFileName = getUploadFileName(article)
+    const canOpenOriginal = hasExternalArticleUrl(article)
     const sentencesByParagraph = (article.sentences ?? []).reduce(
       (groups, sentence) => {
         const paragraphIndex = sentence.paragraph_index ?? 0
@@ -788,18 +819,24 @@ function ArticlePanel({
             <p className="eyebrow">
               {label} / {article.source_domain ?? 'Unknown source'}
             </p>
-            <h2>{article.title ?? 'Untitled article'}</h2>
+            <h2>{displayTitle}</h2>
           </div>
         </div>
 
-        <a
-          className="article-source-link"
-          href={article.url}
-          target="_blank"
-          rel="noreferrer"
-        >
-          View original article <span aria-hidden="true">-&gt;</span>
-        </a>
+        {canOpenOriginal && (
+          <a
+            className="article-source-link"
+            href={article.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View original article <span aria-hidden="true">-&gt;</span>
+          </a>
+        )}
+
+        {!canOpenOriginal && uploadFileName && (
+          <p className="article-source-note">Uploaded file: {uploadFileName}</p>
+        )}
 
         <div className="article-copy">
           {article.paragraphs?.map((paragraph, paragraphIndex) => {
@@ -947,6 +984,7 @@ function ComparisonControls({
         {selectedMatch ? (
           <>
             <div className="explanation-panel__header">
+              <span className="match-number">Pair {selectedMatch.pairNumber}</span>
               <span
                 className={`relationship-pill relationship-pill--${selectedMatch.label}`}
               >
@@ -969,18 +1007,14 @@ function ComparisonControls({
               <div>
                 <strong>Article A</strong>
                 <span>
-                  {getSentenceText(articleA, selectedMatch.sentenceAId) ??
-                    getParagraphText(articleA, selectedMatch.aParagraphIndex) ??
-                    selectedMatch.aTextPreview ??
+                  {getMatchedText(articleA, selectedMatch, 'A') ??
                     'Matched text unavailable.'}
                 </span>
               </div>
               <div>
                 <strong>Article B</strong>
                 <span>
-                  {getSentenceText(articleB, selectedMatch.sentenceBId) ??
-                    getParagraphText(articleB, selectedMatch.bParagraphIndex) ??
-                    selectedMatch.bTextPreview ??
+                  {getMatchedText(articleB, selectedMatch, 'B') ??
                     'Matched text unavailable.'}
                 </span>
               </div>
@@ -988,7 +1022,7 @@ function ComparisonControls({
           </>
         ) : (
           <p>
-            Click any highlighted sentence to see the matching evidence and why
+            Hover over or click any highlighted paragraph to see the matching evidence and why
             it was labelled.
           </p>
         )}
@@ -1020,7 +1054,8 @@ function App() {
   const [visibleLabels, setVisibleLabels] = useState(getInitialFilters)
   const [selectedMatchId, setSelectedMatchId] = useState(null)
   const [activeMobileArticle, setActiveMobileArticle] = useState('A')
-  const [usingDemoCopy, setUsingDemoCopy] = useState(false)
+  const [demoSamples, setDemoSamples] = useState([])
+  const [demoLoadError, setDemoLoadError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   function isSideReady(mode, url, text, file) {
     if (mode === 'url') {
@@ -1036,46 +1071,113 @@ function App() {
     isSideReady(articleAMode, articleAUrl, articleAText, articleAFile) &&
     isSideReady(articleBMode, articleBUrl, articleBText, articleBFile)
 
-  function loadDemoArticles() {
-    const demoMatches = getComparisonMatches(demoArticles.comparison)
+  useEffect(() => {
+    let isActive = true
 
-    setArticleAMode('url')
-    setArticleBMode('url')
-    setArticleAUrl(demoArticles.urls.A)
-    setArticleBUrl(demoArticles.urls.B)
-    setArticleAText('')
-    setArticleBText('')
-    setArticleAFile(null)
-    setArticleBFile(null)
+    async function loadDemoIndex() {
+      try {
+        const indexResponse = await fetch(demoIndexPath)
+
+        if (!indexResponse.ok) {
+          throw new Error('Demo index could not be loaded.')
+        }
+
+        const demoPaths = await indexResponse.json()
+        const samples = await Promise.all(
+          demoPaths.map(async (demoPath) => {
+            const response = await fetch(demoPath)
+
+            if (!response.ok) {
+              throw new Error(`Demo metadata could not be loaded: ${demoPath}`)
+            }
+
+            return response.json()
+          }),
+        )
+
+        if (isActive) {
+          setDemoSamples(samples)
+          setDemoLoadError('')
+        }
+      } catch (error) {
+        if (isActive) {
+          setDemoSamples([])
+          setDemoLoadError(error.message)
+        }
+      }
+    }
+
+    loadDemoIndex()
+
+    return () => {
+      isActive = false
+    }
+  }, [])
+
+  async function loadDemoSample(sample) {
+    setIsLoading(true)
+    setProgress(null)
+    setArticles([])
+    setComparison(null)
+    setSelectedMatchId(null)
+    setActiveMobileArticle('A')
+    setApiErrors([])
+    setFormErrors({})
     setPdfInfoA(null)
     setPdfInfoB(null)
     setWordStatusA(null)
     setWordStatusB(null)
-    setFocus('general')
-    setFormErrors({})
-    setApiErrors([])
-    setProgress(null)
-    setArticles(demoArticles.articles)
-    setComparison(demoArticles.comparison)
-    setSelectedMatchId(demoMatches[0]?.id ?? null)
-    setActiveMobileArticle('A')
-    setUsingDemoCopy(true)
-    setStatusMessage(
-      'Demo articles loaded with Sprint 2 highlights. Click Compare articles to try the live backend.',
-    )
-  }
 
-  function showOfflineDemoFallback(message) {
-    const demoMatches = getComparisonMatches(demoArticles.comparison)
+    try {
+      setFocus(sample.focus)
 
-    setProgress(null)
-    setArticles(demoArticles.articles)
-    setComparison(demoArticles.comparison)
-    setSelectedMatchId(demoMatches[0]?.id ?? null)
-    setActiveMobileArticle('A')
-    setApiErrors([])
-    setUsingDemoCopy(true)
-    setStatusMessage(message)
+      if (sample.kind === 'url') {
+        setArticleAMode('url')
+        setArticleBMode('url')
+        setArticleAUrl(sample.articleA.url)
+        setArticleBUrl(sample.articleB.url)
+        setArticleAText('')
+        setArticleBText('')
+        setArticleAFile(null)
+        setArticleBFile(null)
+      } else if (sample.kind === 'text') {
+        const [articleAText, articleBText] = await Promise.all([
+          readTextDemoAsset(sample.articleA),
+          readTextDemoAsset(sample.articleB),
+        ])
+
+        setArticleAMode('text')
+        setArticleBMode('text')
+        setArticleAUrl('')
+        setArticleBUrl('')
+        setArticleAText(articleAText)
+        setArticleBText(articleBText)
+        setArticleAFile(null)
+        setArticleBFile(null)
+      } else {
+        const [articleAFile, articleBFile] = await Promise.all([
+          createFileFromDemoAsset(sample.articleA),
+          createFileFromDemoAsset(sample.articleB),
+        ])
+
+        setArticleAMode('upload')
+        setArticleBMode('upload')
+        setArticleAUrl('')
+        setArticleBUrl('')
+        setArticleAText('')
+        setArticleBText('')
+        setArticleAFile(articleAFile)
+        setArticleBFile(articleBFile)
+        detectPdfType(articleAFile, setPdfInfoA)
+        detectPdfType(articleBFile, setPdfInfoB)
+      }
+
+      setStatusMessage(`${sample.label} demo inputs loaded. Click Compare articles to run the backend.`)
+    } catch (error) {
+      setStatusMessage(`Could not load demo inputs. ${error.message}`)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   function handleArticleAUrlChange(event) {
@@ -1347,16 +1449,9 @@ function App() {
       setActiveMobileArticle('A')
       setApiErrors([])
       setProgress(null)
-      setUsingDemoCopy(false)
       setStatusMessage('')
       return
     }
-
-    const isDemoPair =
-      articleAMode === 'url' &&
-      articleBMode === 'url' &&
-      articleAUrl.trim() === demoArticles.urls.A &&
-      articleBUrl.trim() === demoArticles.urls.B
 
     setIsLoading(true)
     setArticles([])
@@ -1369,7 +1464,6 @@ function App() {
       message: 'Starting comparison...',
       status: 'running',
     })
-    setUsingDemoCopy(false)
     setStatusMessage('Preparing comparison...')
 
     try {
@@ -1393,15 +1487,11 @@ function App() {
       const returnedErrors = data.errors ?? []
       const backendComparison = data.comparison ?? null
       const hasBackendMatches = getComparisonMatches(backendComparison).length > 0
-      const displayComparison =
-        hasBackendMatches || !isDemoPair
-          ? backendComparison
-          : demoArticles.comparison
-      const displayMatches = getComparisonMatches(displayComparison)
+      const displayMatches = getComparisonMatches(backendComparison)
 
       setArticles(returnedArticles)
       setApiErrors(returnedErrors)
-      setComparison(displayComparison)
+      setComparison(backendComparison)
       setSelectedMatchId(displayMatches[0]?.id ?? null)
       setActiveMobileArticle('A')
       setProgress({
@@ -1411,11 +1501,7 @@ function App() {
       })
 
       if (returnedArticles.length > 0 && returnedErrors.length === 0) {
-        if (displayMatches.length > 0 && !hasBackendMatches && isDemoPair) {
-          setStatusMessage(
-            'Live article text loaded. Demo Sprint 2 highlights are shown until backend comparison results are available.',
-          )
-        } else if (displayMatches.length > 0) {
+        if (hasBackendMatches) {
           setStatusMessage(
             `Live comparison result loaded with the "${getFocusLabel(data.focus)}" focus.`,
           )
@@ -1432,22 +1518,13 @@ function App() {
         setStatusMessage('These articles could not be processed.')
       }
     } catch (error) {
-      if (isDemoPair) {
-        showOfflineDemoFallback(
-          'Live backend was unavailable, so the offline demo copy was loaded.',
-        )
-      } else {
-        setArticles([])
-        setComparison(null)
-        setSelectedMatchId(null)
-        setActiveMobileArticle('A')
-        setApiErrors([])
-        setProgress(null)
-        setUsingDemoCopy(false)
-        setStatusMessage(
-          `Could not complete the comparison. ${error.message}`,
-        )
-      }
+      setArticles([])
+      setComparison(null)
+      setSelectedMatchId(null)
+      setActiveMobileArticle('A')
+      setApiErrors([])
+      setProgress(null)
+      setStatusMessage(`Could not complete the comparison. ${error.message}`)
     } finally {
       setIsLoading(false)
     }
@@ -1471,12 +1548,34 @@ function App() {
     setVisibleLabels(getInitialFilters())
   }
 
+  function handleSaveResults() {
+    if (!articles.length && !comparison) {
+      return
+    }
+
+    const savedAt = new Date().toISOString()
+    const payload = {
+      saved_at: savedAt,
+      focus,
+      articles,
+      comparison,
+      selected_match_id: selectedMatchId,
+      visible_labels: visibleLabels,
+    }
+    const datePart = savedAt.slice(0, 10)
+
+    downloadJsonFile(payload, `comparison-results-${datePart}.json`)
+    setStatusMessage('Comparison results saved as a JSON file.')
+  }
+
   return (
     <div className="app-shell">
       <header className="site-header">
         <a className="brand" href="/" aria-label="Narrative Diff home">
-          <span className="brand-mark" aria-hidden="true">
-            ND
+          <span className="brand-logo" aria-hidden="true">
+            <span className="brand-logo__panel brand-logo__panel--a">N</span>
+            <span className="brand-logo__divider" />
+            <span className="brand-logo__panel brand-logo__panel--b">D</span>
           </span>
           <span>Narrative Diff</span>
         </a>
@@ -1493,21 +1592,32 @@ function App() {
           </p>
 
           <div className="demo-prompt">
-            <div>
-              <strong>Need a reliable demo?</strong>
+            <div className="demo-prompt__copy">
+              <strong>Try sample inputs</strong>
               <span>
-                Load the Al Jazeera and ABC example. If the backend is unavailable,
-                the page falls back to offline demo copy.
+                Load URL, PDF, Word, or pasted text examples, then compare them with the backend.
               </span>
             </div>
-            <button
-              className="demo-button"
-              type="button"
-              onClick={loadDemoArticles}
-              disabled={isLoading}
-            >
-              Load demo articles
-            </button>
+            <div className="demo-buttons" aria-label="Demo input examples">
+              {demoSamples.length > 0 ? (
+                demoSamples.map((sample) => (
+                  <button
+                    className="demo-button"
+                    type="button"
+                    key={sample.id}
+                    onClick={() => loadDemoSample(sample)}
+                    disabled={isLoading}
+                    title={sample.description}
+                  >
+                    {sample.label}
+                  </button>
+                ))
+              ) : (
+                <span className="demo-load-status">
+                  {demoLoadError || 'Loading demo inputs...'}
+                </span>
+              )}
+            </div>
           </div>
 
           <form className="compare-form" onSubmit={handleSubmit} noValidate>
@@ -1609,10 +1719,20 @@ function App() {
               <p className="eyebrow">Comparison view</p>
               <h2 id="results-title">Matched article evidence</h2>
             </div>
-            <p>
-              Review the source text and inspect highlighted similarities or
-              differences.
-            </p>
+            <div className="section-heading__actions">
+              <p>
+                Review the source text and inspect highlighted similarities or
+                differences.
+              </p>
+              <button
+                className="save-results-button"
+                type="button"
+                onClick={handleSaveResults}
+                disabled={!articles.length && !comparison}
+              >
+                Save results
+              </button>
+            </div>
           </div>
 
           <div className="highlight-legend" aria-label="Highlight legend">
@@ -1691,13 +1811,6 @@ function App() {
             onToggleLabel={handleToggleLabel}
             onResetFilters={handleResetFilters}
           />
-
-          {articles.length > 0 && usingDemoCopy && (
-            <p className="demo-disclaimer">
-              Demo copy is a short paraphrased sample prepared for offline
-              presentation. The links above open the original reporting.
-            </p>
-          )}
         </section>
       </main>
 

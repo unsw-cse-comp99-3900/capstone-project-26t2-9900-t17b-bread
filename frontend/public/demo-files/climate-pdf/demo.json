@@ -1,0 +1,17 @@
+{
+  "id": "pdf-climate",
+  "label": "PDF",
+  "description": "NASA and NOAA climate reports",
+  "kind": "upload",
+  "focus": "economic",
+  "articleA": {
+    "filePath": "/demo-files/climate-pdf/1a.pdf",
+    "fileName": "1a.pdf",
+    "mimeType": "application/pdf"
+  },
+  "articleB": {
+    "filePath": "/demo-files/climate-pdf/1b.pdf",
+    "fileName": "1b.pdf",
+    "mimeType": "application/pdf"
+  }
+}

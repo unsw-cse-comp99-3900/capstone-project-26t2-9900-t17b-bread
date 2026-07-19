@@ -1,0 +1,13 @@
+{
+  "id": "text-volcano",
+  "label": "Text",
+  "description": "Paste-text volcano sample",
+  "kind": "text",
+  "focus": "general",
+  "articleA": {
+    "filePath": "/demo-files/volcano-text/1a.txt"
+  },
+  "articleB": {
+    "filePath": "/demo-files/volcano-text/1b.txt"
+  }
+}
