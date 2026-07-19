@@ -1,6 +1,7 @@
 {
   "id": "pdf-climate",
   "label": "PDF",
+  "shortLabel": "Climate",
   "description": "NASA and NOAA climate reports",
   "kind": "upload",
   "focus": "economic",

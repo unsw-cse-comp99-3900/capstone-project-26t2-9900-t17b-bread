@@ -1,6 +1,7 @@
 {
   "id": "url-volcano",
   "label": "URL",
+  "shortLabel": "Volcano",
   "description": "Iceland volcano coverage",
   "kind": "url",
   "focus": "general",

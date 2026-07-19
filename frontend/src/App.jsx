@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
 const focusOptions = [
@@ -25,6 +25,8 @@ const maxUploadSizeBytes = 10 * 1024 * 1024
 const minTextChars = 20
 
 const demoIndexPath = '/demo-files/index.json'
+const comparisonHistoryKey = 'narrative-diff-history'
+const maxHistoryItems = 10
 
 const friendlyErrorMessages = {
   url_missing: {
@@ -216,6 +218,96 @@ function downloadJsonFile(payload, filename) {
   URL.revokeObjectURL(objectUrl)
 }
 
+function loadComparisonHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(comparisonHistoryKey) ?? '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveComparisonHistory(items) {
+  localStorage.setItem(
+    comparisonHistoryKey,
+    JSON.stringify(items.slice(0, maxHistoryItems)),
+  )
+}
+
+function getHistoryArticleTitle(article, fallback) {
+  return article?.title || article?.source_domain || fallback
+}
+
+function buildHistoryItem({ focus, articles, comparison }) {
+  const savedAt = new Date().toISOString()
+  const articleA = articles.find((article) => article.article_ref === 'A')
+  const articleB = articles.find((article) => article.article_ref === 'B')
+  const focusLabel = getFocusLabel(focus)
+
+  return {
+    id: `${Date.now()}`,
+    saved_at: savedAt,
+    focus,
+    label: `${getHistoryArticleTitle(articleA, 'Article A')} vs ${getHistoryArticleTitle(
+      articleB,
+      'Article B',
+    )}`,
+    description: `${focusLabel} · ${new Date(savedAt).toLocaleString()}`,
+    articles,
+    comparison,
+  }
+}
+
+function buildComparisonSummary({
+  focus,
+  articleA,
+  articleB,
+  matches,
+  selectedMatch,
+}) {
+  const counts = getMatchCounts(matches)
+  const lines = [
+    'Narrative Diff comparison summary',
+    `Focus: ${getFocusLabel(focus)}`,
+    `Article A: ${getHistoryArticleTitle(articleA, 'Article A')}`,
+    `Article B: ${getHistoryArticleTitle(articleB, 'Article B')}`,
+    `Aligned: ${counts.aligned}`,
+    `Partially aligned: ${counts.partially_aligned}`,
+    `Divergent: ${counts.divergent}`,
+  ]
+
+  if (selectedMatch) {
+    lines.push(
+      '',
+      `Selected pair: Pair ${selectedMatch.pairNumber}`,
+      `Label: ${
+        relationshipOptions.find((option) => option.value === selectedMatch.label)
+          ?.label ?? selectedMatch.label
+      }`,
+      `Explanation: ${selectedMatch.explanation}`,
+    )
+  }
+
+  return lines.join('\n')
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.append(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  textarea.remove()
+}
+
 async function createFileFromDemoAsset({ filePath, fileName, mimeType }) {
   const response = await fetch(filePath)
 
@@ -324,6 +416,16 @@ function getErrorForArticle(apiErrors, side) {
 function getInitialFilters() {
   return relationshipOptions.reduce(
     (filters, option) => ({ ...filters, [option.value]: true }),
+    {},
+  )
+}
+
+function getMatchCounts(matches) {
+  return relationshipOptions.reduce(
+    (counts, option) => ({
+      ...counts,
+      [option.value]: matches.filter((match) => match.label === option.value).length,
+    }),
     {},
   )
 }
@@ -450,9 +552,9 @@ function getMatchedText(article, match, side) {
   const sentenceId = side === 'A' ? match.sentenceAId : match.sentenceBId
 
   return (
-    preview ??
     getParagraphText(article, paragraphIndex) ??
-    getSentenceText(article, sentenceId)
+    getSentenceText(article, sentenceId) ??
+    preview
   )
 }
 
@@ -602,6 +704,7 @@ function ArticleSourceField({
   onTextChange,
   onFileChange,
   onConvertWord,
+  onClear,
 }) {
   const inputId = `article-${side.toLowerCase()}-url`
   const textId = `article-${side.toLowerCase()}-text`
@@ -642,34 +745,48 @@ function ArticleSourceField({
 
       {mode === 'url' && (
         <>
-          <input
-            className="url-input"
-            id={inputId}
-            type="url"
-            value={url}
-            onChange={onUrlChange}
-            placeholder="https://news-outlet.com/article"
-            aria-describedby={error ? errorId : undefined}
-            aria-invalid={Boolean(error)}
-            disabled={isLoading}
-          />
+          <div className="input-with-action">
+            <input
+              className="url-input"
+              id={inputId}
+              type="url"
+              value={url}
+              onChange={onUrlChange}
+              placeholder="https://news-outlet.com/article"
+              aria-describedby={error ? errorId : undefined}
+              aria-invalid={Boolean(error)}
+              disabled={isLoading}
+            />
+            {url && (
+              <button type="button" onClick={onClear} disabled={isLoading}>
+                Clear
+              </button>
+            )}
+          </div>
           {urlHost && <p className="input-hint">Source: {urlHost}</p>}
         </>
       )}
 
       {mode === 'text' && (
         <>
-          <textarea
-            className="text-input"
-            id={textId}
-            value={text}
-            onChange={onTextChange}
-            rows={6}
-            placeholder="Paste the full article text here..."
-            aria-describedby={error ? errorId : undefined}
-            aria-invalid={Boolean(error)}
-            disabled={isLoading}
-          />
+          <div className="input-with-action input-with-action--textarea">
+            <textarea
+              className="text-input"
+              id={textId}
+              value={text}
+              onChange={onTextChange}
+              rows={6}
+              placeholder="Paste the full article text here..."
+              aria-describedby={error ? errorId : undefined}
+              aria-invalid={Boolean(error)}
+              disabled={isLoading}
+            />
+            {text && (
+              <button type="button" onClick={onClear} disabled={isLoading}>
+                Clear
+              </button>
+            )}
+          </div>
           <p className="input-hint">
             {text.trim().length} characters. Paste the article body directly —
             no link needed.
@@ -694,6 +811,16 @@ function ArticleSourceField({
             />
             <span>{file ? file.name : 'Choose a PDF or Word file'}</span>
           </label>
+          {file && (
+            <button
+              className="clear-input-button"
+              type="button"
+              onClick={onClear}
+              disabled={isLoading}
+            >
+              Clear file
+            </button>
+          )}
           <p className="input-hint">
             Works with text PDFs, scanned/image PDFs (auto OCR), Word files,
             paywalled pages, or subscription content.
@@ -941,9 +1068,6 @@ function ArticlePanel({
 function ComparisonControls({
   matches,
   visibleLabels,
-  selectedMatch,
-  articleA,
-  articleB,
   onToggleLabel,
   onResetFilters,
 }) {
@@ -951,82 +1075,178 @@ function ComparisonControls({
     return null
   }
 
+  const matchCounts = getMatchCounts(matches)
+
   return (
-    <section className="comparison-inspector" aria-labelledby="inspector-title">
-      <div className="filter-panel">
-        <div>
-          <p className="eyebrow">Relationship filters</p>
-          <h2 id="inspector-title">Comparison highlights</h2>
-        </div>
+    <section className="comparison-filters" aria-label="Highlight filters">
+      <p>Show:</p>
+      <div className="filter-controls">
+        {relationshipOptions.map((option) => (
+          <label
+            className={`filter-toggle filter-toggle--${option.value}`}
+            key={option.value}
+          >
+            <input
+              type="checkbox"
+              checked={visibleLabels[option.value]}
+              onChange={() => onToggleLabel(option.value)}
+            />
+            <span>
+              {option.label} {matchCounts[option.value]}
+            </span>
+          </label>
+        ))}
+      </div>
 
-        <div className="filter-controls" aria-label="Highlight filters">
-          {relationshipOptions.map((option) => (
-            <label
-              className={`filter-toggle filter-toggle--${option.value}`}
-              key={option.value}
-            >
-              <input
-                type="checkbox"
-                checked={visibleLabels[option.value]}
-                onChange={() => onToggleLabel(option.value)}
-              />
-              <span>{option.label}</span>
-            </label>
-          ))}
-        </div>
+      <button className="reset-filters-button" type="button" onClick={onResetFilters}>
+        Reset
+      </button>
+    </section>
+  )
+}
 
-        <button className="reset-filters-button" type="button" onClick={onResetFilters}>
-          Reset filters
+function MatchExplanationPanel({
+  selectedMatch,
+  matches,
+  articleA,
+  articleB,
+  onSelectMatch,
+  onClose,
+}) {
+  if (!selectedMatch) {
+    return null
+  }
+
+  const selectedIndex = matches.findIndex((match) => match.id === selectedMatch.id)
+  const previousMatch = selectedIndex > 0 ? matches[selectedIndex - 1] : null
+  const nextMatch =
+    selectedIndex >= 0 && selectedIndex < matches.length - 1
+      ? matches[selectedIndex + 1]
+      : null
+
+  return (
+    <aside className="explanation-panel" aria-live="polite">
+      <div className="explanation-panel__header">
+        <span className="match-number">Pair {selectedMatch.pairNumber}</span>
+        <span
+          className={`relationship-pill relationship-pill--${selectedMatch.label}`}
+        >
+          {
+            relationshipOptions.find(
+              (option) => option.value === selectedMatch.label,
+            )?.label
+          }
+        </span>
+        {typeof selectedMatch.score === 'number' && (
+          <span className="match-score">
+            Score {Math.round(selectedMatch.score * 100)}%
+          </span>
+        )}
+        <button
+          className="explanation-panel__close"
+          type="button"
+          onClick={onClose}
+          aria-label="Close evidence panel"
+        >
+          Close
         </button>
       </div>
 
-      <aside className="explanation-panel" aria-live="polite">
-        {selectedMatch ? (
-          <>
-            <div className="explanation-panel__header">
-              <span className="match-number">Pair {selectedMatch.pairNumber}</span>
-              <span
-                className={`relationship-pill relationship-pill--${selectedMatch.label}`}
-              >
-                {
-                  relationshipOptions.find(
-                    (option) => option.value === selectedMatch.label,
-                  )?.label
-                }
-              </span>
-              {typeof selectedMatch.score === 'number' && (
-                <span className="match-score">
-                  Score {Math.round(selectedMatch.score * 100)}%
-                </span>
-              )}
-            </div>
+      <p>{selectedMatch.explanation}</p>
 
-            <p>{selectedMatch.explanation}</p>
+      <div className="match-nav">
+        <button
+          type="button"
+          onClick={() => previousMatch && onSelectMatch(previousMatch.id)}
+          disabled={!previousMatch}
+        >
+          Previous
+        </button>
+        <span>
+          {selectedIndex + 1} of {matches.length}
+        </span>
+        <button
+          type="button"
+          onClick={() => nextMatch && onSelectMatch(nextMatch.id)}
+          disabled={!nextMatch}
+        >
+          Next
+        </button>
+      </div>
 
-            <div className="matched-text">
-              <div>
-                <strong>Article A</strong>
-                <span>
-                  {getMatchedText(articleA, selectedMatch, 'A') ??
-                    'Matched text unavailable.'}
-                </span>
+      <div className="matched-text">
+        <div>
+          <strong>Article A</strong>
+          <span>
+            {getMatchedText(articleA, selectedMatch, 'A') ??
+              'Matched text unavailable.'}
+          </span>
+        </div>
+        <div>
+          <strong>Article B</strong>
+          <span>
+            {getMatchedText(articleB, selectedMatch, 'B') ??
+              'Matched text unavailable.'}
+          </span>
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+function HistoryPanel({
+  historyItems,
+  isOpen,
+  onClose,
+  onRestore,
+  onDelete,
+  onClear,
+}) {
+  if (!isOpen) {
+    return null
+  }
+
+  return (
+    <section className="history-panel" aria-label="Comparison history">
+      <div className="history-panel__header">
+        <div>
+          <p className="eyebrow">Browser history</p>
+          <h2>Recent comparisons</h2>
+        </div>
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+
+      {historyItems.length > 0 ? (
+        <>
+          <div className="history-list">
+            {historyItems.map((item) => (
+              <div className="history-item" key={item.id}>
+                <button type="button" onClick={() => onRestore(item)}>
+                  <span>{item.label}</span>
+                  <small>{item.description}</small>
+                </button>
+                <button
+                  className="history-item__delete"
+                  type="button"
+                  onClick={() => onDelete(item.id)}
+                  aria-label={`Delete ${item.label} from history`}
+                >
+                  Delete
+                </button>
               </div>
-              <div>
-                <strong>Article B</strong>
-                <span>
-                  {getMatchedText(articleB, selectedMatch, 'B') ??
-                    'Matched text unavailable.'}
-                </span>
-              </div>
-            </div>
-          </>
-        ) : (
-          <p>
-            Hover over or click any highlighted paragraph to see the matching evidence and why
-            it was labelled.
-          </p>
-        )}
-      </aside>
+            ))}
+          </div>
+          <button className="history-clear-button" type="button" onClick={onClear}>
+            Clear history
+          </button>
+        </>
+      ) : (
+        <p className="history-empty">
+          Your recent comparisons will appear here after a successful run.
+        </p>
+      )}
     </section>
   )
 }
@@ -1056,7 +1276,11 @@ function App() {
   const [activeMobileArticle, setActiveMobileArticle] = useState('A')
   const [demoSamples, setDemoSamples] = useState([])
   const [demoLoadError, setDemoLoadError] = useState('')
+  const [historyItems, setHistoryItems] = useState(loadComparisonHistory)
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const inputSectionRef = useRef(null)
+  const resultsSectionRef = useRef(null)
   function isSideReady(mode, url, text, file) {
     if (mode === 'url') {
       return isValidHttpUrl(url)
@@ -1217,6 +1441,28 @@ function App() {
 
   function handleArticleBModeChange(nextMode) {
     setArticleBMode(nextMode)
+    setFormErrors((currentErrors) =>
+      clearFieldError(currentErrors, 'articleB'),
+    )
+  }
+
+  function clearArticleAInput() {
+    setArticleAUrl('')
+    setArticleAText('')
+    setArticleAFile(null)
+    setPdfInfoA(null)
+    setWordStatusA(null)
+    setFormErrors((currentErrors) =>
+      clearFieldError(currentErrors, 'articleA'),
+    )
+  }
+
+  function clearArticleBInput() {
+    setArticleBUrl('')
+    setArticleBText('')
+    setArticleBFile(null)
+    setPdfInfoB(null)
+    setWordStatusB(null)
     setFormErrors((currentErrors) =>
       clearFieldError(currentErrors, 'articleB'),
     )
@@ -1487,12 +1733,11 @@ function App() {
       const returnedErrors = data.errors ?? []
       const backendComparison = data.comparison ?? null
       const hasBackendMatches = getComparisonMatches(backendComparison).length > 0
-      const displayMatches = getComparisonMatches(backendComparison)
 
       setArticles(returnedArticles)
       setApiErrors(returnedErrors)
       setComparison(backendComparison)
-      setSelectedMatchId(displayMatches[0]?.id ?? null)
+      setSelectedMatchId(null)
       setActiveMobileArticle('A')
       setProgress({
         percent: 100,
@@ -1502,6 +1747,19 @@ function App() {
 
       if (returnedArticles.length > 0 && returnedErrors.length === 0) {
         if (hasBackendMatches) {
+          const historyItem = buildHistoryItem({
+            focus: data.focus ?? focus,
+            articles: returnedArticles,
+            comparison: backendComparison,
+          })
+          setHistoryItems((currentItems) => {
+            const nextItems = [
+              historyItem,
+              ...currentItems.filter((item) => item.id !== historyItem.id),
+            ].slice(0, maxHistoryItems)
+            saveComparisonHistory(nextItems)
+            return nextItems
+          })
           setStatusMessage(
             `Live comparison result loaded with the "${getFocusLabel(data.focus)}" focus.`,
           )
@@ -1536,6 +1794,32 @@ function App() {
   const selectedMatch =
     comparisonMatches.find((match) => match.id === selectedMatchId) ?? null
   const readinessMessage = getCompareReadinessMessage(canCompare, isLoading)
+  const demoGroups = [
+    {
+      label: 'URL',
+      samples: demoSamples.filter((sample) => sample.kind === 'url'),
+    },
+    {
+      label: 'PDF',
+      samples: demoSamples.filter(
+        (sample) =>
+          sample.kind === 'upload' &&
+          sample.articleA?.fileName?.toLowerCase().endsWith('.pdf'),
+      ),
+    },
+    {
+      label: 'Word',
+      samples: demoSamples.filter(
+        (sample) =>
+          sample.kind === 'upload' &&
+          sample.articleA?.fileName?.toLowerCase().endsWith('.docx'),
+      ),
+    },
+    {
+      label: 'Text',
+      samples: demoSamples.filter((sample) => sample.kind === 'text'),
+    },
+  ]
 
   function handleToggleLabel(label) {
     setVisibleLabels((currentLabels) => ({
@@ -1546,6 +1830,63 @@ function App() {
 
   function handleResetFilters() {
     setVisibleLabels(getInitialFilters())
+  }
+
+  function handleSelectMatch(matchId) {
+    setSelectedMatchId(matchId)
+  }
+
+  function handleRestoreHistory(item) {
+    setArticles(item.articles ?? [])
+    setComparison(item.comparison ?? null)
+    setFocus(item.focus ?? 'general')
+    setSelectedMatchId(null)
+    setActiveMobileArticle('A')
+    setVisibleLabels(getInitialFilters())
+    setApiErrors([])
+    setProgress(null)
+    setStatusMessage(`Restored comparison from ${new Date(item.saved_at).toLocaleString()}.`)
+    setIsHistoryOpen(false)
+  }
+
+  function handleClearHistory() {
+    saveComparisonHistory([])
+    setHistoryItems([])
+  }
+
+  function handleDeleteHistoryItem(itemId) {
+    setHistoryItems((currentItems) => {
+      const nextItems = currentItems.filter((item) => item.id !== itemId)
+      saveComparisonHistory(nextItems)
+      return nextItems
+    })
+  }
+
+  function scrollToInput() {
+    inputSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  function scrollToResults() {
+    resultsSectionRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    })
+  }
+
+  async function handleCopySummary() {
+    if (!comparisonMatches.length) {
+      return
+    }
+
+    const summary = buildComparisonSummary({
+      focus,
+      articleA,
+      articleB,
+      matches: comparisonMatches,
+      selectedMatch,
+    })
+    await copyTextToClipboard(summary)
+    setStatusMessage('Comparison summary copied to clipboard.')
   }
 
   function handleSaveResults() {
@@ -1572,18 +1913,38 @@ function App() {
     <div className="app-shell">
       <header className="site-header">
         <a className="brand" href="/" aria-label="Narrative Diff home">
-          <span className="brand-logo" aria-hidden="true">
-            <span className="brand-logo__panel brand-logo__panel--a">N</span>
-            <span className="brand-logo__divider" />
-            <span className="brand-logo__panel brand-logo__panel--b">D</span>
-          </span>
+          <img
+            className="brand-logo"
+            src="/narrative-diff-icon.svg"
+            alt=""
+            aria-hidden="true"
+          />
           <span>Narrative Diff</span>
         </a>
-        <span className="sprint-label">Sprint 2 prototype</span>
+        <div className="header-actions">
+          <button
+            className="history-button"
+            type="button"
+            onClick={() => setIsHistoryOpen((isOpen) => !isOpen)}
+          >
+            History
+            {historyItems.length > 0 && <span>{historyItems.length}</span>}
+          </button>
+          <span className="sprint-label">Sprint 2 prototype</span>
+        </div>
       </header>
 
       <main>
-        <section className="hero-section">
+        <HistoryPanel
+          historyItems={historyItems}
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
+          onRestore={handleRestoreHistory}
+          onDelete={handleDeleteHistoryItem}
+          onClear={handleClearHistory}
+        />
+
+        <section className="hero-section" ref={inputSectionRef}>
           <p className="eyebrow">Compare reporting. See the difference.</p>
           <h1>How does the story change between news outlets?</h1>
           <p className="hero-copy">
@@ -1594,24 +1955,38 @@ function App() {
           <div className="demo-prompt">
             <div className="demo-prompt__copy">
               <strong>Try sample inputs</strong>
-              <span>
-                Load URL, PDF, Word, or pasted text examples, then compare them with the backend.
-              </span>
             </div>
             <div className="demo-buttons" aria-label="Demo input examples">
               {demoSamples.length > 0 ? (
-                demoSamples.map((sample) => (
-                  <button
-                    className="demo-button"
-                    type="button"
-                    key={sample.id}
-                    onClick={() => loadDemoSample(sample)}
-                    disabled={isLoading}
-                    title={sample.description}
-                  >
-                    {sample.label}
-                  </button>
-                ))
+                <>
+                  {demoGroups.map((group) => (
+                    <label className="demo-select-label" key={group.label}>
+                      {group.label}
+                      <select
+                        className="demo-select"
+                        value=""
+                        onChange={(event) => {
+                          const selectedSample = group.samples.find(
+                            (sample) => sample.id === event.target.value,
+                          )
+                          if (selectedSample) {
+                            loadDemoSample(selectedSample)
+                          }
+                        }}
+                        disabled={isLoading || group.samples.length === 0}
+                      >
+                        <option value="" disabled>
+                          Choose pair
+                        </option>
+                        {group.samples.map((sample) => (
+                          <option key={sample.id} value={sample.id}>
+                            {sample.shortLabel ?? sample.description}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </>
               ) : (
                 <span className="demo-load-status">
                   {demoLoadError || 'Loading demo inputs...'}
@@ -1638,6 +2013,7 @@ function App() {
                 onTextChange={handleArticleATextChange}
                 onFileChange={handleArticleAFileChange}
                 onConvertWord={() => convertPdfToWord(articleAFile, setWordStatusA)}
+                onClear={clearArticleAInput}
               />
 
               <ArticleSourceField
@@ -1656,6 +2032,7 @@ function App() {
                 onTextChange={handleArticleBTextChange}
                 onFileChange={handleArticleBFileChange}
                 onConvertWord={() => convertPdfToWord(articleBFile, setWordStatusB)}
+                onClear={clearArticleBInput}
               />
             </div>
 
@@ -1710,10 +2087,24 @@ function App() {
                 </div>
               </div>
             )}
+
+            {articles.length > 0 && (
+              <button
+                className="jump-button"
+                type="button"
+                onClick={scrollToResults}
+              >
+                Jump to results
+              </button>
+            )}
           </form>
         </section>
 
-        <section className="results-section" aria-labelledby="results-title">
+        <section
+          className="results-section"
+          aria-labelledby="results-title"
+          ref={resultsSectionRef}
+        >
           <div className="section-heading">
             <div>
               <p className="eyebrow">Comparison view</p>
@@ -1732,19 +2123,32 @@ function App() {
               >
                 Save results
               </button>
+              <div className="section-button-row">
+                <button
+                  className="save-results-button"
+                  type="button"
+                  onClick={handleCopySummary}
+                  disabled={!comparisonMatches.length}
+                >
+                  Copy summary
+                </button>
+                <button
+                  className="save-results-button"
+                  type="button"
+                  onClick={scrollToInput}
+                >
+                  Back to input
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="highlight-legend" aria-label="Highlight legend">
-            {relationshipOptions.map((option) => (
-              <span
-                className={`legend-item legend-item--${option.value}`}
-                key={option.value}
-              >
-                {option.label}
-              </span>
-            ))}
-          </div>
+          <ComparisonControls
+            matches={comparisonMatches}
+            visibleLabels={visibleLabels}
+            onToggleLabel={handleToggleLabel}
+            onResetFilters={handleResetFilters}
+          />
 
           <div className="mobile-article-tabs" aria-label="Article view">
             {['A', 'B'].map((side) => (
@@ -1763,54 +2167,69 @@ function App() {
             ))}
           </div>
 
-          <div className="article-grid">
-            <div
-              className={
-                activeMobileArticle === 'A'
-                  ? 'article-grid__item'
-                  : 'article-grid__item article-grid__item--inactive-mobile'
-              }
-            >
-              <ArticlePanel
-                article={articleA}
-                error={getErrorForArticle(apiErrors, 'A')}
-                label="Article A"
-                side="A"
-                matches={comparisonMatches}
-                visibleLabels={visibleLabels}
-                selectedMatchId={selectedMatchId}
-                onSelectMatch={setSelectedMatchId}
-              />
+          {!selectedMatch && comparisonMatches.length > 0 && (
+            <p className="match-selection-hint">
+              Tip: click any highlighted paragraph pair to open its evidence panel.
+            </p>
+          )}
+
+          <div
+            className={
+              selectedMatch
+                ? 'results-layout results-layout--with-panel'
+                : 'results-layout'
+            }
+          >
+            <div className="article-grid">
+              <div
+                className={
+                  activeMobileArticle === 'A'
+                    ? 'article-grid__item'
+                    : 'article-grid__item article-grid__item--inactive-mobile'
+                }
+              >
+                <ArticlePanel
+                  article={articleA}
+                  error={getErrorForArticle(apiErrors, 'A')}
+                  label="Article A"
+                  side="A"
+                  matches={comparisonMatches}
+                  visibleLabels={visibleLabels}
+                  selectedMatchId={selectedMatchId}
+                  onSelectMatch={handleSelectMatch}
+                />
+              </div>
+              <div
+                className={
+                  activeMobileArticle === 'B'
+                    ? 'article-grid__item'
+                    : 'article-grid__item article-grid__item--inactive-mobile'
+                }
+              >
+                <ArticlePanel
+                  article={articleB}
+                  error={getErrorForArticle(apiErrors, 'B')}
+                  label="Article B"
+                  side="B"
+                  matches={comparisonMatches}
+                  visibleLabels={visibleLabels}
+                  selectedMatchId={selectedMatchId}
+                  onSelectMatch={handleSelectMatch}
+                />
+              </div>
             </div>
-            <div
-              className={
-                activeMobileArticle === 'B'
-                  ? 'article-grid__item'
-                  : 'article-grid__item article-grid__item--inactive-mobile'
-              }
-            >
-              <ArticlePanel
-                article={articleB}
-                error={getErrorForArticle(apiErrors, 'B')}
-                label="Article B"
-                side="B"
+
+            <div className="sticky-explanation-slot">
+              <MatchExplanationPanel
+                selectedMatch={selectedMatch}
                 matches={comparisonMatches}
-                visibleLabels={visibleLabels}
-                selectedMatchId={selectedMatchId}
-                onSelectMatch={setSelectedMatchId}
+                articleA={articleA}
+                articleB={articleB}
+                onSelectMatch={handleSelectMatch}
+                onClose={() => setSelectedMatchId(null)}
               />
             </div>
           </div>
-
-          <ComparisonControls
-            matches={comparisonMatches}
-            visibleLabels={visibleLabels}
-            selectedMatch={selectedMatch}
-            articleA={articleA}
-            articleB={articleB}
-            onToggleLabel={handleToggleLabel}
-            onResetFilters={handleResetFilters}
-          />
         </section>
       </main>
 
