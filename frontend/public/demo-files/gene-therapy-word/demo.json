@@ -1,6 +1,7 @@
 {
   "id": "word-health",
   "label": "Word",
+  "shortLabel": "Gene therapy",
   "description": "FDA and NIH gene therapy coverage",
   "kind": "upload",
   "focus": "social",

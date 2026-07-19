@@ -1,0 +1,14 @@
+{
+  "id": "url-iran-strikes",
+  "label": "URL",
+  "shortLabel": "Iran strikes",
+  "description": "ABC and Al Jazeera coverage of US-Iran strikes",
+  "kind": "url",
+  "focus": "political",
+  "articleA": {
+    "url": "https://www.abc.net.au/news/2026-07-18/us-and-iran-attack-civilian-infrastructure-in-latest-strikes/106931002"
+  },
+  "articleB": {
+    "url": "https://www.aljazeera.com/news/2026/7/17/gulf-states-come-under-iranian-fire-as-us-strikes-intensify"
+  }
+}

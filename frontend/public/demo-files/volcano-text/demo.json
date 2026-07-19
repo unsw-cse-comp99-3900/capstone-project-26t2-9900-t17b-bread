@@ -1,6 +1,7 @@
 {
   "id": "text-volcano",
   "label": "Text",
+  "shortLabel": "Volcano",
   "description": "Paste-text volcano sample",
   "kind": "text",
   "focus": "general",

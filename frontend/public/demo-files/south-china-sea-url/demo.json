@@ -1,0 +1,14 @@
+{
+  "id": "url-south-china-sea",
+  "label": "URL",
+  "shortLabel": "South China Sea",
+  "description": "Al Jazeera and Global Times coverage of South China Sea tensions",
+  "kind": "url",
+  "focus": "political",
+  "articleA": {
+    "url": "https://www.aljazeera.com/news/2024/6/20/china-coast-guard-accused-of-behaving-like-pirates-in-south-china-sea"
+  },
+  "articleB": {
+    "url": "https://www.globaltimes.cn/page/202406/1314604.shtml"
+  }
+}
