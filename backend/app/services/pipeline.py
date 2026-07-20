@@ -19,6 +19,9 @@ from app.services.hybrid_scoring_service import get_hybrid_scoring_service
 from app.services.paragraph_chunking_service import build_paragraph_chunks
 from app.services.preprocessing_service import preprocess_article
 from app.services.progress import ProgressTracker
+from app.services.contradiction_detection_service import (
+    get_contradiction_detection_service,
+)
 from app.services.relationship_classification_service import (
     get_relationship_classification_service,
 )
@@ -61,6 +64,7 @@ class ComparisonPipelineResult:
     bm25_pair_scores: list[dict[str, Any]]
     hybrid_pair_scores: list[dict[str, Any]]
     cross_mappings: list[dict[str, Any]]
+    analysed_mappings: list[dict[str, Any]]
     relationships: list[dict[str, Any]]
 
     @property
@@ -90,7 +94,27 @@ class ComparisonPipelineResult:
                 "bm25_pair_count": len(self.bm25_pair_scores),
                 "hybrid_pair_count": len(self.hybrid_pair_scores),
                 "cross_mapping_count": len(self.cross_mappings),
+                "nli_evaluated_count": sum(
+                    1
+                    for mapping in self.analysed_mappings
+                    if mapping.get("nli_evaluated", False)
+                ),
                 "relationship_count": len(self.relationships),
+                "aligned_count": sum(
+                    1
+                    for relationship in self.relationships
+                    if relationship.get("label") == "aligned"
+                ),
+                "partially_aligned_count": sum(
+                    1
+                    for relationship in self.relationships
+                    if relationship.get("label") == "partially_aligned"
+                ),
+                "divergent_count": sum(
+                    1
+                    for relationship in self.relationships
+                    if relationship.get("label") == "divergent"
+                ),
             },
             "cross_mappings": self.cross_mappings,
             "relationships": self.relationships,
@@ -100,6 +124,7 @@ class ComparisonPipelineResult:
             payload["debug"] = {
                 "top_hybrid_pair_scores": self.hybrid_pair_scores[:debug_limit],
                 "top_cross_mappings": self.cross_mappings[:debug_limit],
+                "top_nli_analysed_mappings": self.analysed_mappings[:debug_limit],
             }
 
         return payload
@@ -387,7 +412,8 @@ async def _run_comparison_pipeline(
     2. BM25 lexical scoring
     3. hybrid scoring with focus scaling
     4. cross mapping
-    5. relationship classification
+    5. contradiction/NLI detection
+    6. relationship classification
     """
 
     focus_value = _normalise_focus(focus)
@@ -401,6 +427,7 @@ async def _run_comparison_pipeline(
     bm25_service = get_bm25_similarity_service()
     hybrid_service = get_hybrid_scoring_service()
     cross_mapping_service = get_cross_mapping_service()
+    contradiction_service = get_contradiction_detection_service()
     relationship_service = get_relationship_classification_service()
 
     if progress is not None:
@@ -477,14 +504,43 @@ async def _run_comparison_pipeline(
     cross_mappings = await asyncio.to_thread(
         cross_mapping_service.build_cross_mappings,
         hybrid_pair_scores,
-        min_score=0.55,
     )
 
     if progress is not None:
         await progress.emit(
-            percent=99,
+            percent=98,
             message=f"Cross mapping completed with {len(cross_mappings)} mappings.",
             step="cross_mapping",
+            status="completed",
+        )
+        await progress.emit(
+            percent=98,
+            message="Running contradiction and NLI analysis...",
+            step="contradiction_detection",
+            status="running",
+        )
+
+    analysed_mappings = await asyncio.to_thread(
+        contradiction_service.analyse_mappings,
+        cross_mappings,
+        chunks_a=chunks_a,
+        chunks_b=chunks_b,
+    )
+
+    if progress is not None:
+        evaluated_count = sum(
+            1
+            for mapping in analysed_mappings
+            if mapping.get("nli_evaluated", False)
+        )
+
+        await progress.emit(
+            percent=99,
+            message=(
+                "Contradiction analysis completed with "
+                f"{evaluated_count} NLI-evaluated mappings."
+            ),
+            step="contradiction_detection",
             status="completed",
         )
         await progress.emit(
@@ -496,7 +552,7 @@ async def _run_comparison_pipeline(
 
     relationships = await asyncio.to_thread(
         relationship_service.classify_mappings,
-        cross_mappings,
+        analysed_mappings,
         chunks_a=chunks_a,
         chunks_b=chunks_b,
     )
@@ -504,7 +560,10 @@ async def _run_comparison_pipeline(
     if progress is not None:
         await progress.emit(
             percent=99,
-            message=f"Relationship classification completed with {len(relationships)} results.",
+            message=(
+                "Relationship classification completed with "
+                f"{len(relationships)} visible results."
+            ),
             step="relationship_classification",
             status="completed",
         )
@@ -515,6 +574,7 @@ async def _run_comparison_pipeline(
         bm25_pair_scores=bm25_pair_scores,
         hybrid_pair_scores=hybrid_pair_scores,
         cross_mappings=cross_mappings,
+        analysed_mappings=analysed_mappings,
         relationships=relationships,
     )
 
