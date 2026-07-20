@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -21,23 +21,28 @@ class ComparisonFocus(str, Enum):
 
 
 class CompareRequest(BaseModel):
-    """Request to run the article-processing and comparison pipeline.
+    """
+    Request to run the article-processing and comparison pipeline.
 
-    Each article can be provided either as a URL or as pasted text. When both
-    are given for one article, the pasted text takes priority.
+    Each article can be provided as either a URL or pasted text.
+    When both are provided for one article, pasted text takes priority.
     """
 
     article_a_url: str | None = Field(
-        default=None, description="HTTP/HTTPS URL of article A."
+        default=None,
+        description="HTTP/HTTPS URL of article A.",
     )
     article_b_url: str | None = Field(
-        default=None, description="HTTP/HTTPS URL of article B."
+        default=None,
+        description="HTTP/HTTPS URL of article B.",
     )
     article_a_text: str | None = Field(
-        default=None, description="Pasted plain-text body for article A."
+        default=None,
+        description="Pasted plain-text body for article A.",
     )
     article_b_text: str | None = Field(
-        default=None, description="Pasted plain-text body for article B."
+        default=None,
+        description="Pasted plain-text body for article B.",
     )
     focus: ComparisonFocus = ComparisonFocus.GENERAL
 
@@ -49,14 +54,16 @@ class CompareRequest(BaseModel):
             self.article_a_text or ""
         ).strip():
             raise ValueError(
-                "Article A is missing. Provide article_a_url or article_a_text."
+                "Article A is missing. Provide article_a_url "
+                "or article_a_text."
             )
 
         if not (self.article_b_url or "").strip() and not (
             self.article_b_text or ""
         ).strip():
             raise ValueError(
-                "Article B is missing. Provide article_b_url or article_b_text."
+                "Article B is missing. Provide article_b_url "
+                "or article_b_text."
             )
 
         return self
@@ -94,7 +101,7 @@ class CompareArticle(BaseModel):
     """
     Clean article payload returned by the comparison endpoint.
 
-    Internal fields such as sentences, paragraph_chunks and embeddings
+    Internal fields such as sentences, paragraph chunks and embeddings
     are intentionally excluded.
     """
 
@@ -113,9 +120,12 @@ class CompareArticle(BaseModel):
 
 
 class ComparisonSummary(BaseModel):
-    """Summary of final comparison output."""
+    """Summary counts for the final visible comparison results."""
 
     match_count: int = 0
+    aligned_count: int = 0
+    partially_aligned_count: int = 0
+    divergent_count: int = 0
 
 
 class ComparisonMatch(BaseModel):
@@ -131,28 +141,48 @@ class ComparisonMatch(BaseModel):
     a_chunk_index: int | None = None
     b_chunk_index: int | None = None
 
-    label: Literal["aligned", "partially_aligned", "divergent"]
-    score: float = 0.0
+    label: Literal[
+        "aligned",
+        "partially_aligned",
+        "divergent",
+    ]
 
-    confidence: str | None = None
+    score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+    )
+
+    confidence: Literal[
+        "low",
+        "medium",
+        "high",
+    ] | None = None
+
     reason_code: str | None = None
     explanation: str | None = None
 
     a_text_preview: str | None = None
     b_text_preview: str | None = None
-    pair_number: int | None = None
+
+    pair_number: int | None = Field(
+        default=None,
+        ge=1,
+    )
 
 
 class ComparisonResult(BaseModel):
     """Final comparison result returned to the frontend."""
 
     focus: ComparisonFocus = ComparisonFocus.GENERAL
-    summary: ComparisonSummary = Field(default_factory=ComparisonSummary)
+    summary: ComparisonSummary = Field(
+        default_factory=ComparisonSummary
+    )
     matches: list[ComparisonMatch] = Field(default_factory=list)
 
 
 class CompareResponse(BaseModel):
-    """Response for article processing and final comparison result."""
+    """Response for article processing and final comparison results."""
 
     focus: ComparisonFocus
 
@@ -162,19 +192,23 @@ class CompareResponse(BaseModel):
 
     processing: ProcessingSummary | None = Field(
         default=None,
-        description="Timing and progress summary for the frontend progress UI.",
+        description=(
+            "Timing and progress summary for the frontend progress UI."
+        ),
     )
 
     comparison: ComparisonResult | None = Field(
         default=None,
-        description="Final comparison result with chunk-level matches.",
+        description=(
+            "Final comparison result with chunk-level matches."
+        ),
     )
 
     session_token: str | None = Field(
         default=None,
         description=(
-            "Token identifying the stored comparison session. Null when "
-            "persistence is disabled or unavailable."
+            "Token identifying the stored comparison session. "
+            "Null when persistence is disabled or unavailable."
         ),
     )
 
@@ -193,7 +227,11 @@ class Alignment(BaseModel):
 class Relationship(BaseModel):
     a_index: int
     b_index: int
-    label: Literal["aligned", "partially_aligned", "divergent"]
+    label: Literal[
+        "aligned",
+        "partially_aligned",
+        "divergent",
+    ]
 
 
 class Explanation(BaseModel):

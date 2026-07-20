@@ -52,39 +52,60 @@ def _build_stage_error(result: ArticleResult) -> dict[str, Any] | None:
     }
 
 
-def _relationship_explanation(relationship: dict[str, Any]) -> str:
+def _relationship_explanation(
+    relationship: dict[str, Any],
+) -> str:
     """Create a simple explanation for frontend display."""
 
     label = relationship.get("label")
     reason_code = relationship.get("reason_code")
 
     if label == "aligned":
+        if reason_code == "strong_similarity_with_nli_entailment":
+            return (
+                "These paragraph chunks present strongly consistent content, "
+                "supported by semantic similarity, lexical overlap, and NLI "
+                "entailment evidence."
+            )
+
         return (
-            "These paragraph chunks discuss highly similar content with strong "
-            "semantic and lexical support."
+            "These paragraph chunks discuss highly similar content with "
+            "strong semantic and lexical support."
         )
 
     if label == "partially_aligned":
         if reason_code == "semantic_match_with_lexical_difference":
             return (
-                "These paragraph chunks discuss related content, but use different "
-                "wording or emphasize different details."
+                "These paragraph chunks discuss related content, but use "
+                "different wording or emphasize different details."
             )
 
         if reason_code == "lexical_overlap_with_semantic_difference":
             return (
-                "These paragraph chunks share important terms or entities, but "
-                "frame the issue differently."
+                "These paragraph chunks share important terms or entities, "
+                "but differ in semantic meaning or framing."
+            )
+
+        if reason_code == "related_content_with_nli_neutrality":
+            return (
+                "These paragraph chunks discuss related content, but neither "
+                "clearly support nor contradict each other."
             )
 
         return (
-            "These paragraph chunks are related, but differ in emphasis, detail, "
-            "or framing."
+            "These paragraph chunks are related, but differ in emphasis, "
+            "detail, or framing."
+        )
+
+    if label == "divergent":
+        return (
+            "These paragraph chunks discuss the same or closely related "
+            "subject, but contain strong contradiction evidence."
         )
 
     return (
-        "These paragraph chunks are weakly related or show a clear difference "
-        "in coverage."
+        "These paragraph chunks do not contain enough shared content for "
+        "a reliable relationship classification."
     )
 
 
@@ -107,13 +128,12 @@ def _build_frontend_matches(pair_result: PairPipelineResult) -> list[dict[str, A
         if not a_chunk_id or not b_chunk_id:
             continue
 
-        score = (
-            relationship.get("mapping_score")
-            or relationship.get("hybrid_score")
-            or relationship.get("base_hybrid_score")
-            or 0.0
-        )
+        mapping_score = relationship.get("mapping_score")
+        hybrid_score = relationship.get("hybrid_score")
+        base_hybrid_score = relationship.get("base_hybrid_score")
 
+        score = float(hybrid_score) if hybrid_score is not None else 0.0
+        
         matches.append(
             {
                 "id": f"{a_chunk_id}-{b_chunk_id}-{index}",
@@ -137,12 +157,16 @@ def _build_frontend_matches(pair_result: PairPipelineResult) -> list[dict[str, A
     return matches
 
 
-def _build_comparison_payload(pair_result: PairPipelineResult) -> dict[str, Any] | None:
+def _build_comparison_payload(
+    pair_result: PairPipelineResult,
+) -> dict[str, Any] | None:
     """
     Convert internal comparison result into final frontend comparison output.
 
-    This only returns the final comparison result.
-    It does not return debug scores or intermediate pipeline outputs.
+    Only visible relationships are returned:
+        aligned
+        partially_aligned
+        divergent
     """
 
     if pair_result.comparison is None:
@@ -155,6 +179,21 @@ def _build_comparison_payload(pair_result: PairPipelineResult) -> dict[str, Any]
         "focus": comparison.focus,
         "summary": {
             "match_count": len(matches),
+            "aligned_count": sum(
+                1
+                for match in matches
+                if match.get("label") == "aligned"
+            ),
+            "partially_aligned_count": sum(
+                1
+                for match in matches
+                if match.get("label") == "partially_aligned"
+            ),
+            "divergent_count": sum(
+                1
+                for match in matches
+                if match.get("label") == "divergent"
+            ),
         },
         "matches": matches,
     }
