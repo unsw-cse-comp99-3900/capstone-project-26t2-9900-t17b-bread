@@ -27,7 +27,11 @@ class EmbeddingService:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self.model_name)
+            self._model = SentenceTransformer(
+            self.model_name, 
+            device="cpu", 
+            model_kwargs={"low_cpu_mem_usage": False}
+        )
         return self._model
 
     def encode_paragraph_chunks(

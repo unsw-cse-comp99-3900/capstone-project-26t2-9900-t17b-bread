@@ -1,5 +1,5 @@
--- Database Initialisation Script (Sprint 1)
-CREATE TABLE IF NOT EXISTS articles (
+-- Database Initialisation Script (Sprint 2 Updated)
+CREATE TABLE IF NOT EXISTS public.articles (
     id SERIAL PRIMARY KEY,
     url TEXT UNIQUE NOT NULL,
     title TEXT,
@@ -7,41 +7,42 @@ CREATE TABLE IF NOT EXISTS articles (
     main_body TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX IF NOT EXISTS idx_articles_url ON articles(url);
+CREATE INDEX IF NOT EXISTS idx_articles_url ON public.articles(url);
 
-CREATE TABLE IF NOT EXISTS user_sessions (
-    id SERIAL PRIMARY KEY,
-    session_token VARCHAR(255) NOT NULL,
-    article_a_url TEXT NOT NULL,
-    article_b_url TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_sessions_token ON user_sessions(session_token);
-
-CREATE TABLE IF NOT EXISTS article_embeddings (
-    id SERIAL PRIMARY KEY,
-    article_id INT REFERENCES articles(id) ON DELETE CASCADE,
-    embedding REAL[] NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_embeddings_article_id ON article_embeddings(article_id);
-
-CREATE TABLE IF NOT EXISTS public.embeddings_collection (
+CREATE TABLE IF NOT EXISTS public.paragraph_chunks (
     id SERIAL PRIMARY KEY,
     article_id INT REFERENCES public.articles(id) ON DELETE CASCADE,
-    sentence_index INT NOT NULL,
+    paragraph_index INT NOT NULL,
     text_content TEXT NOT NULL,
-    embedding FLOAT8[] NOT NULL
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_chunks_article_id ON public.paragraph_chunks(article_id);
+
+CREATE TABLE IF NOT EXISTS public.embeddings (
+    id SERIAL PRIMARY KEY,
+    chunk_id INT REFERENCES public.paragraph_chunks(id) ON DELETE CASCADE,
+    vector FLOAT8[] NOT NULL,
+    model_name TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_embeddings_chunk_id ON public.embeddings(chunk_id);
 
 CREATE TABLE IF NOT EXISTS public.comparison_results (
     id SERIAL PRIMARY KEY,
-    session_id INT REFERENCES public.user_sessions(id) ON DELETE CASCADE,
     article_a_id INT REFERENCES public.articles(id),
     article_b_id INT REFERENCES public.articles(id),
-    alignment_matrix JSONB NOT NULL,
-    similarity_score NUMERIC(4, 2),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP，
-    review_status VARCHAR(50) DEFAULT 'pending',
-    admin_notes TEXT
+    result_json JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_comparison_articles ON public.comparison_results(article_a_id, article_b_id);
+
+CREATE TABLE IF NOT EXISTS public.history (
+    id SERIAL PRIMARY KEY,
+    comparison_id INT REFERENCES public.comparison_results(id) ON DELETE CASCADE,
+    saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_articles_url ON public.articles(url);
+CREATE INDEX IF NOT EXISTS idx_chunks_article_id ON public.paragraph_chunks(article_id);
+CREATE INDEX IF NOT EXISTS idx_embeddings_chunk_id ON public.embeddings(chunk_id);
+CREATE INDEX IF NOT EXISTS idx_comparison_results_pairs ON public.comparison_results(article_a_id, article_b_id);
