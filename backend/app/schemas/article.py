@@ -34,6 +34,21 @@ class UploadResponse(BaseModel):
     processing: "ProcessingSummary"
 
 
+class PdfTypeResponse(BaseModel):
+    """Result of detecting whether an uploaded PDF is text-based or scanned."""
+
+    pdf_type: str = Field(..., description='"text" (selectable text) or "image" (scanned).')
+    is_image_based: bool = Field(..., description="True when OCR is needed to read the PDF.")
+    page_count: int
+    chars_per_page: float = Field(..., description="Average directly-extractable characters per page.")
+    pages_with_images: int
+    ocr_available: bool = Field(..., description="Whether the server can OCR image PDFs right now.")
+    recommended_endpoint: str = Field(
+        ...,
+        description='Suggested next call: "/api/upload" for text PDFs, "/api/upload/pdf-to-word" for scans.',
+    )
+
+
 class SentenceUnit(BaseModel):
     """A single prepared sentence (PROJ-4).
 
@@ -61,3 +76,12 @@ class ProcessedArticle(BaseModel):
     paragraphs: list[str] = Field(default_factory=list)
     sentences: list[SentenceUnit] = Field(default_factory=list)
     paragraph_chunks: list[dict] = Field(default_factory=list)
+
+
+    summary: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Extractive summary sentences selected directly from the article. "
+            "Each item includes sentence text, source position, and relevance score."
+        ),
+    )

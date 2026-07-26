@@ -1,28 +1,23 @@
 # Narrative Diff Frontend
 
-React + Vite frontend for the T17B BREAD news narrative comparison tool. The UI supports URL or PDF/Word article inputs, streaming progress, side-by-side desktop reading, mobile article tabs, highlighted comparison evidence, filters, and explanations.
+React + Vite frontend for the T17B BREAD news narrative comparison tool.
+
+The frontend supports URL, pasted text, PDF, and Word inputs, then displays paragraph-level comparison results from the backend with numbered highlights, explanations, filters, and save/export support.
 
 ## Requirements
 
 - Node.js LTS
 - npm
-- A running FastAPI backend for live article fetching
-- Modern browser such as Chrome, Edge, Firefox or Safari
+- FastAPI backend running on `http://localhost:8000`
+- Modern browser such as Chrome, Edge, Firefox, or Safari
 
-Check Node and npm are available:
-
-```powershell
-node --version
-npm --version
-```
-
-Install frontend dependencies once before running the app:
+## Install
 
 ```powershell
 npm install
 ```
 
-## Run locally
+## Run Locally
 
 From this `frontend` directory:
 
@@ -30,22 +25,24 @@ From this `frontend` directory:
 npm run dev
 ```
 
-Open the local Vite URL shown in the terminal, usually:
+Open the Vite URL shown in the terminal, usually:
 
 ```text
 http://localhost:5173
 ```
 
-## Backend connection
+## Backend Connection
 
-The frontend calls the backend with relative API paths:
+The app uses relative API paths:
 
 ```text
 /api/compare/stream
 /api/compare/files/stream
+/api/upload/pdf-type
+/api/upload/pdf-to-word
 ```
 
-During local development, Vite proxies `/api` requests to the FastAPI backend:
+Vite proxies `/api` requests to:
 
 ```text
 http://localhost:8000
@@ -57,27 +54,89 @@ Start the backend from the project `backend` directory:
 uvicorn app.main:app --reload
 ```
 
-## Current features
+## Current Features
 
-- Two article inputs with URL or PDF/Word upload mode
-- URL format validation
+- Dummy logo and comparison-focused UI
+- Two article inputs with `URL`, `Paste text`, and `PDF / Word` modes
+- URL and text validation
 - PDF/Word file validation
+- PDF type detection for text PDFs versus scanned/image PDFs
+- PDF-to-Word download helper
 - Comparison focus selector
-- Live backend API integration through streaming compare endpoints
-- Progress bar for long-running article processing
-- Side-by-side cleaned article display on desktop
-- Mobile Article A / Article B tab view on narrow screens
-- Per-article backend error display
-- User-friendly error messages for invalid links, blocked sites, paywalls, login-required pages, and upload problems
-- Colour-coded comparison highlights for aligned, partially aligned, and divergent matches
+- Streaming compare requests with progress bar
+- Desktop side-by-side article view
+- Mobile Article A / Article B tabs
+- User-friendly errors for invalid links, blocked sites, paywalls, login-required pages, upload failures, and OCR failures
+- Paragraph-level color-coded highlights for `aligned`, `partially_aligned`, and `divergent`
+- Numbered match pairs from backend `pair_number`
+- Hover or click one highlighted paragraph to strongly highlight the paired paragraph on the other side
 - Highlight legend and relationship filters
-- Click-to-inspect explanation panel for matched evidence
-- Prepared Al Jazeera / ABC demo URLs
-- Offline demo copy fallback when the demo URLs are used and the backend is unavailable
+- Explanation panel with score, pair number, label, explanation, and matched evidence previews
+- Save results button that downloads the current result as JSON
 
-## Not implemented yet
+## Demo Inputs
 
-- Backend-generated semantic sentence alignment
-- Backend-generated comparison explanations
-- Summary generation
-- Database-backed comparison history
+Demo buttons are generated from:
+
+```text
+public/demo-files/index.json
+```
+
+Each demo pair lives in its own folder with a `demo.json` file. The pair is fixed by the `articleA` and `articleB` entries inside that folder's metadata.
+
+Current structure:
+
+```text
+public/demo-files/
+  index.json
+  climate-pdf/
+    1a.pdf
+    1b.pdf
+    demo.json
+  gene-therapy-word/
+    1a.docx
+    1b.docx
+    demo.json
+  volcano-text/
+    1a.txt
+    1b.txt
+    demo.json
+  volcano-url/
+    demo.json
+```
+
+To add a demo pair:
+
+1. Create a new folder under `public/demo-files/`.
+2. Add paired files inside that folder, usually named `1a` and `1b` with the correct file extension.
+3. Add a `demo.json` describing the pair.
+4. Add the `demo.json` path to `public/demo-files/index.json`.
+
+Example `demo.json` for an uploaded PDF pair:
+
+```json
+{
+  "id": "example-pdf",
+  "label": "PDF",
+  "description": "Example PDF article pair",
+  "kind": "upload",
+  "focus": "general",
+  "articleA": {
+    "filePath": "/demo-files/example-pdf/1a.pdf",
+    "fileName": "1a.pdf",
+    "mimeType": "application/pdf"
+  },
+  "articleB": {
+    "filePath": "/demo-files/example-pdf/1b.pdf",
+    "fileName": "1b.pdf",
+    "mimeType": "application/pdf"
+  }
+}
+```
+
+## Validation
+
+```powershell
+npm run lint
+npm run build
+```

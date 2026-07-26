@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,14 +14,20 @@ from app.services.bm25_similarity_service import get_bm25_similarity_service
 from app.services.cosine_similarity_service import get_cosine_similarity_service
 from app.services.cross_mapping_service import get_cross_mapping_service
 from app.services.embedding_service import get_embedding_service
-from app.services.errors import PipelineError
+from app.services.errors import ErrorCode, PipelineError, PipelineStage
 from app.services.hybrid_scoring_service import get_hybrid_scoring_service
 from app.services.paragraph_chunking_service import build_paragraph_chunks
 from app.services.preprocessing_service import preprocess_article
 from app.services.progress import ProgressTracker
+from app.services.contradiction_detection_service import (
+    get_contradiction_detection_service,
+)
 from app.services.relationship_classification_service import (
     get_relationship_classification_service,
 )
+from app.services.summary_service import get_summary_service
+
+logger = logging.getLogger(__name__)
 
 
 VALID_FOCUS_VALUES = {
@@ -57,6 +64,7 @@ class ComparisonPipelineResult:
     bm25_pair_scores: list[dict[str, Any]]
     hybrid_pair_scores: list[dict[str, Any]]
     cross_mappings: list[dict[str, Any]]
+    analysed_mappings: list[dict[str, Any]]
     relationships: list[dict[str, Any]]
 
     @property
@@ -86,7 +94,27 @@ class ComparisonPipelineResult:
                 "bm25_pair_count": len(self.bm25_pair_scores),
                 "hybrid_pair_count": len(self.hybrid_pair_scores),
                 "cross_mapping_count": len(self.cross_mappings),
+                "nli_evaluated_count": sum(
+                    1
+                    for mapping in self.analysed_mappings
+                    if mapping.get("nli_evaluated", False)
+                ),
                 "relationship_count": len(self.relationships),
+                "aligned_count": sum(
+                    1
+                    for relationship in self.relationships
+                    if relationship.get("label") == "aligned"
+                ),
+                "partially_aligned_count": sum(
+                    1
+                    for relationship in self.relationships
+                    if relationship.get("label") == "partially_aligned"
+                ),
+                "divergent_count": sum(
+                    1
+                    for relationship in self.relationships
+                    if relationship.get("label") == "divergent"
+                ),
             },
             "cross_mappings": self.cross_mappings,
             "relationships": self.relationships,
@@ -96,6 +124,7 @@ class ComparisonPipelineResult:
             payload["debug"] = {
                 "top_hybrid_pair_scores": self.hybrid_pair_scores[:debug_limit],
                 "top_cross_mappings": self.cross_mappings[:debug_limit],
+                "top_nli_analysed_mappings": self.analysed_mappings[:debug_limit],
             }
 
         return payload
@@ -161,6 +190,29 @@ async def _run_post_fetch_pipeline(
             article_ref=article_ref,
             status="completed",
         )
+
+        await progress.emit(
+            message=f"Generating extractive summary for article {article_ref}...",
+            step="summarization",
+            article_ref=article_ref,
+            status="running",
+        )
+
+    summary_service = get_summary_service()
+
+    processed.summary = await asyncio.to_thread(
+        summary_service.summarize_article,
+        processed,
+    )
+
+    if progress is not None:
+        await progress.emit(
+            message=f"Extractive summary ready for article {article_ref}.",
+            step="summarization",
+            article_ref=article_ref,
+            status="completed",
+        )
+
         await progress.emit(
             message=f"Building paragraph chunks for article {article_ref}...",
             step="chunking",
@@ -286,6 +338,44 @@ async def process_article_input(
             error=exc,
         )
 
+    except Exception as exc:  # noqa: BLE001 - convert any unexpected failure
+        # Any non-pipeline error (e.g. a missing ML dependency, model load
+        # failure, or OOM) is turned into a per-article error so the other
+        # article can still be processed and the stream terminates cleanly
+        # instead of hanging.
+        logger.exception(
+            "Unexpected error while processing article %s", article_ref
+        )
+
+        wrapped = PipelineError(
+            PipelineStage.EMBEDDING,
+            ErrorCode.UNKNOWN,
+            article_ref=article_ref,
+            message=(
+                f"An unexpected error occurred while processing article "
+                f"{article_ref}: {exc}"
+            ),
+        )
+
+        if progress is not None:
+            await progress.emit(
+                percent=percent_end,
+                message=f"Article {article_ref} failed: {wrapped.message}",
+                step="complete",
+                article_ref=article_ref,
+                status="failed",
+            )
+
+        source = article_input.url or (
+            f"upload://{article_input.filename}" if article_input.filename else None
+        )
+
+        return ArticleResult(
+            article_ref=article_ref,
+            url=source,
+            error=wrapped,
+        )
+
 
 async def process_article(
     raw_url: str | None,
@@ -322,7 +412,8 @@ async def _run_comparison_pipeline(
     2. BM25 lexical scoring
     3. hybrid scoring with focus scaling
     4. cross mapping
-    5. relationship classification
+    5. contradiction/NLI detection
+    6. relationship classification
     """
 
     focus_value = _normalise_focus(focus)
@@ -336,6 +427,7 @@ async def _run_comparison_pipeline(
     bm25_service = get_bm25_similarity_service()
     hybrid_service = get_hybrid_scoring_service()
     cross_mapping_service = get_cross_mapping_service()
+    contradiction_service = get_contradiction_detection_service()
     relationship_service = get_relationship_classification_service()
 
     if progress is not None:
@@ -412,14 +504,43 @@ async def _run_comparison_pipeline(
     cross_mappings = await asyncio.to_thread(
         cross_mapping_service.build_cross_mappings,
         hybrid_pair_scores,
-        min_score=0.55,
     )
 
     if progress is not None:
         await progress.emit(
-            percent=99,
+            percent=98,
             message=f"Cross mapping completed with {len(cross_mappings)} mappings.",
             step="cross_mapping",
+            status="completed",
+        )
+        await progress.emit(
+            percent=98,
+            message="Running contradiction and NLI analysis...",
+            step="contradiction_detection",
+            status="running",
+        )
+
+    analysed_mappings = await asyncio.to_thread(
+        contradiction_service.analyse_mappings,
+        cross_mappings,
+        chunks_a=chunks_a,
+        chunks_b=chunks_b,
+    )
+
+    if progress is not None:
+        evaluated_count = sum(
+            1
+            for mapping in analysed_mappings
+            if mapping.get("nli_evaluated", False)
+        )
+
+        await progress.emit(
+            percent=99,
+            message=(
+                "Contradiction analysis completed with "
+                f"{evaluated_count} NLI-evaluated mappings."
+            ),
+            step="contradiction_detection",
             status="completed",
         )
         await progress.emit(
@@ -431,7 +552,7 @@ async def _run_comparison_pipeline(
 
     relationships = await asyncio.to_thread(
         relationship_service.classify_mappings,
-        cross_mappings,
+        analysed_mappings,
         chunks_a=chunks_a,
         chunks_b=chunks_b,
     )
@@ -439,7 +560,10 @@ async def _run_comparison_pipeline(
     if progress is not None:
         await progress.emit(
             percent=99,
-            message=f"Relationship classification completed with {len(relationships)} results.",
+            message=(
+                "Relationship classification completed with "
+                f"{len(relationships)} visible results."
+            ),
             step="relationship_classification",
             status="completed",
         )
@@ -450,6 +574,7 @@ async def _run_comparison_pipeline(
         bm25_pair_scores=bm25_pair_scores,
         hybrid_pair_scores=hybrid_pair_scores,
         cross_mappings=cross_mappings,
+        analysed_mappings=analysed_mappings,
         relationships=relationships,
     )
 

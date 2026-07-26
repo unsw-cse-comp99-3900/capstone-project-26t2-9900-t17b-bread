@@ -37,6 +37,18 @@ class Settings(BaseSettings):
     # Uploaded documents (PDF / Word)
     upload_max_bytes: int = 10_000_000
 
+    # OCR for image-based (scanned) PDFs
+    # A PDF is treated as image-based (scanned) when its directly extractable
+    # text is below this many characters per page on average.
+    pdf_image_char_threshold: int = 25
+    # Rendering resolution for OCR; higher = more accurate but slower.
+    ocr_dpi: int = 300
+    # Tesseract language packs, e.g. "eng" or "eng+chi_sim".
+    ocr_languages: str = "eng"
+    # Optional absolute path to the tesseract executable (Windows convenience).
+    # Leave empty to rely on PATH.
+    tesseract_cmd: str = ""
+
     # Database (PostgreSQL). Leave empty to disable persistence entirely:
     # the API still works, it just won't store articles or sessions.
     # Accepts either "postgresql://" or "postgresql+psycopg://" — the async

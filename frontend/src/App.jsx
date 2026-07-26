@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import './App.css'
 
 const focusOptions = [
@@ -17,148 +17,16 @@ const relationshipOptions = [
 
 const articleInputModes = [
   { value: 'url', label: 'URL' },
+  { value: 'text', label: 'Paste text' },
   { value: 'upload', label: 'PDF / Word' },
 ]
 
 const maxUploadSizeBytes = 10 * 1024 * 1024
+const minTextChars = 20
 
-const demoArticles = {
-  urls: {
-    A: 'https://www.aljazeera.com/news/2024/11/28/australia-passes-legislation-banning-under-16s-from-social-media',
-    B: 'https://www.abc.net.au/news/2024-11-29/meta-snapchat-tiktok-respond-to-australian-social-media-ban/104664478',
-  },
-  articles: [
-    {
-      article_ref: 'A',
-      title: 'Australia passes legislation banning under-16s from social media',
-      source_domain: 'aljazeera.com',
-      url: 'https://www.aljazeera.com/news/2024/11/28/australia-passes-legislation-banning-under-16s-from-social-media',
-      paragraphs: [
-        'Australia passed legislation banning children aged under 16 from using social media, creating one of the world’s strictest rules for online platforms.',
-        'The law requires companies such as Instagram, Facebook and TikTok to prevent under-16s from holding accounts or face large financial penalties.',
-        'Prime Minister Anthony Albanese argued that the measure would help protect young people from peer pressure, anxiety, scammers and online predators.',
-        'Critics warned that the ban could limit support networks for vulnerable teenagers and raise privacy concerns around age verification.',
-      ],
-      sentences: [
-        {
-          id: 'A-0',
-          article_ref: 'A',
-          text: 'Australia passed legislation banning children aged under 16 from using social media, creating one of the world鈥檚 strictest rules for online platforms.',
-          paragraph_index: 0,
-          sentence_index: 0,
-          char_start: 0,
-          char_end: 132,
-        },
-        {
-          id: 'A-1',
-          article_ref: 'A',
-          text: 'The law requires companies such as Instagram, Facebook and TikTok to prevent under-16s from holding accounts or face large financial penalties.',
-          paragraph_index: 1,
-          sentence_index: 1,
-          char_start: 133,
-          char_end: 269,
-        },
-        {
-          id: 'A-2',
-          article_ref: 'A',
-          text: 'Prime Minister Anthony Albanese argued that the measure would help protect young people from peer pressure, anxiety, scammers and online predators.',
-          paragraph_index: 2,
-          sentence_index: 2,
-          char_start: 270,
-          char_end: 410,
-        },
-        {
-          id: 'A-3',
-          article_ref: 'A',
-          text: 'Critics warned that the ban could limit support networks for vulnerable teenagers and raise privacy concerns around age verification.',
-          paragraph_index: 3,
-          sentence_index: 3,
-          char_start: 411,
-          char_end: 531,
-        },
-      ],
-    },
-    {
-      article_ref: 'B',
-      title:
-        "Tech companies respond to Australia's social media ban for under-16s",
-      source_domain: 'abc.net.au',
-      url: 'https://www.abc.net.au/news/2024-11-29/meta-snapchat-tiktok-respond-to-australian-social-media-ban/104664478',
-      paragraphs: [
-        'Major technology companies responded with concern after Australia approved new laws banning children and young teenagers from social media.',
-        'Meta, Snapchat and TikTok said they were disappointed by the legislation and raised questions about how the rules would be implemented.',
-        'The companies said they supported online safety but argued that the government needed clearer guidance on age assurance and enforcement.',
-        'The law will not take effect immediately, giving platforms and regulators time to work through technical compliance details.',
-      ],
-      sentences: [
-        {
-          id: 'B-0',
-          article_ref: 'B',
-          text: 'Major technology companies responded with concern after Australia approved new laws banning children and young teenagers from social media.',
-          paragraph_index: 0,
-          sentence_index: 0,
-          char_start: 0,
-          char_end: 128,
-        },
-        {
-          id: 'B-1',
-          article_ref: 'B',
-          text: 'Meta, Snapchat and TikTok said they were disappointed by the legislation and raised questions about how the rules would be implemented.',
-          paragraph_index: 1,
-          sentence_index: 1,
-          char_start: 129,
-          char_end: 257,
-        },
-        {
-          id: 'B-2',
-          article_ref: 'B',
-          text: 'The companies said they supported online safety but argued that the government needed clearer guidance on age assurance and enforcement.',
-          paragraph_index: 2,
-          sentence_index: 2,
-          char_start: 258,
-          char_end: 383,
-        },
-        {
-          id: 'B-3',
-          article_ref: 'B',
-          text: 'The law will not take effect immediately, giving platforms and regulators time to work through technical compliance details.',
-          paragraph_index: 3,
-          sentence_index: 3,
-          char_start: 384,
-          char_end: 495,
-        },
-      ],
-    },
-  ],
-  comparison: {
-    matches: [
-      {
-        sentence_a_id: 'A-0',
-        sentence_b_id: 'B-0',
-        label: 'aligned',
-        score: 0.91,
-        explanation:
-          'Both sections describe the same core event: Australia approving a social media ban for young users.',
-      },
-      {
-        sentence_a_id: 'A-1',
-        sentence_b_id: 'B-1',
-        label: 'partially_aligned',
-        score: 0.73,
-        explanation:
-          'Both sections discuss platform obligations, but article A emphasises penalties while article B emphasises company concerns about implementation.',
-      },
-      {
-        sentence_a_id: 'A-2',
-        sentence_b_id: 'B-2',
-        label: 'divergent',
-        score: 0.48,
-        explanation:
-          'Article A frames the measure through government protection claims, while article B foregrounds technology companies asking for clearer rules.',
-      },
-    ],
-  },
-}
+const demoIndexPath = '/demo-files/index.json'
+const comparisonHistoryKey = 'narrative-diff-history'
+const maxHistoryItems = 10
 
 const friendlyErrorMessages = {
   url_missing: {
@@ -256,6 +124,36 @@ const friendlyErrorMessages = {
     message: 'The uploaded document does not contain enough extractable article text.',
     action: 'Check the file contents and upload a readable copy.',
   },
+  text_empty: {
+    title: 'No text was pasted',
+    message: 'The article text box is empty.',
+    action: 'Paste the article content into the text box before comparing.',
+  },
+  text_too_short: {
+    title: 'Pasted text is too short',
+    message: 'There is not enough text to analyse this article.',
+    action: 'Paste the full article body, not just the headline.',
+  },
+  ocr_unavailable: {
+    title: 'Scanned PDF reading is unavailable',
+    message: 'The server cannot run OCR right now, so this scanned PDF cannot be read.',
+    action: 'Upload a text-based PDF/Word file, or paste the article text instead.',
+  },
+  ocr_failed: {
+    title: 'Scanned PDF could not be read',
+    message: 'OCR was unable to recognise text in this scanned document.',
+    action: 'Try a clearer scan, a text-based PDF, or paste the article text.',
+  },
+  ocr_no_text_found: {
+    title: 'No text found in the scanned PDF',
+    message: 'OCR completed but did not find readable article text.',
+    action: 'Check that the PDF contains article pages, then try again.',
+  },
+  pdf_not_image_based: {
+    title: 'This PDF already has selectable text',
+    message: 'This looks like a text PDF, so OCR conversion was not needed.',
+    action: 'Use it directly for comparison, or download it as Word if you like.',
+  },
 }
 
 function isValidHttpUrl(value) {
@@ -280,12 +178,228 @@ function isValidUpload(file) {
   return Boolean(file) && isAllowedUpload(file) && file.size <= maxUploadSizeBytes
 }
 
+function isValidText(text) {
+  return typeof text === 'string' && text.trim().length >= minTextChars
+}
+
+function isPdfFile(file) {
+  return Boolean(file) && file.name.toLowerCase().endsWith('.pdf')
+}
+
+function getDownloadFilename(contentDisposition, fallback) {
+  if (!contentDisposition) {
+    return fallback
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return fallback
+    }
+  }
+
+  const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
+  return plainMatch ? plainMatch[1] : fallback
+}
+
+function downloadJsonFile(payload, filename) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json',
+  })
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = filename
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(objectUrl)
+}
+
+function loadComparisonHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(comparisonHistoryKey) ?? '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveComparisonHistory(items) {
+  localStorage.setItem(
+    comparisonHistoryKey,
+    JSON.stringify(items.slice(0, maxHistoryItems)),
+  )
+}
+
+function getHistoryArticleTitle(article, fallback) {
+  return article?.title || article?.source_domain || fallback
+}
+
+function buildHistoryItem({ focus, articles, comparison }) {
+  const savedAt = new Date().toISOString()
+  const articleA = articles.find((article) => article.article_ref === 'A')
+  const articleB = articles.find((article) => article.article_ref === 'B')
+  const focusLabel = getFocusLabel(focus)
+
+  return {
+    id: `${Date.now()}`,
+    saved_at: savedAt,
+    focus,
+    label: `${getHistoryArticleTitle(articleA, 'Article A')} vs ${getHistoryArticleTitle(
+      articleB,
+      'Article B',
+    )}`,
+    description: `${focusLabel} · ${new Date(savedAt).toLocaleString()}`,
+    articles,
+    comparison,
+  }
+}
+
+function buildComparisonSummary({
+  focus,
+  articleA,
+  articleB,
+  matches,
+  selectedMatch,
+}) {
+  const counts = getMatchCounts(matches)
+  const lines = [
+    'Narrative Diff comparison summary',
+    `Focus: ${getFocusLabel(focus)}`,
+    `Article A: ${getHistoryArticleTitle(articleA, 'Article A')}`,
+    `Article B: ${getHistoryArticleTitle(articleB, 'Article B')}`,
+    `Aligned: ${counts.aligned}`,
+    `Partially aligned: ${counts.partially_aligned}`,
+    `Divergent: ${counts.divergent}`,
+  ]
+
+  if (selectedMatch) {
+    lines.push(
+      '',
+      `Selected pair: Pair ${selectedMatch.pairNumber}`,
+      `Label: ${
+        relationshipOptions.find((option) => option.value === selectedMatch.label)
+          ?.label ?? selectedMatch.label
+      }`,
+      `Explanation: ${selectedMatch.explanation}`,
+    )
+  }
+
+  return lines.join('\n')
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.append(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  textarea.remove()
+}
+
+async function createFileFromDemoAsset({ filePath, fileName, mimeType }) {
+  const response = await fetch(filePath)
+
+  if (!response.ok) {
+    throw new Error(`Could not load ${fileName}.`)
+  }
+
+  const blob = await response.blob()
+  return new File([blob], fileName, { type: mimeType })
+}
+
+async function readTextDemoAsset({ filePath }) {
+  const response = await fetch(filePath)
+
+  if (!response.ok) {
+    throw new Error(`Could not load ${filePath}.`)
+  }
+
+  return response.text()
+}
+
 function getUrlHost(value) {
   try {
     return new URL(value.trim()).hostname.replace(/^www\./, '')
   } catch {
     return ''
   }
+}
+
+function isUploadedArticle(article) {
+  return article?.source_type === 'upload' || article?.url?.startsWith('upload://')
+}
+
+function getUploadFileName(article) {
+  if (!article?.url?.startsWith('upload://')) {
+    return ''
+  }
+
+  try {
+    return decodeURIComponent(article.url.replace('upload://', ''))
+  } catch {
+    return article.url.replace('upload://', '')
+  }
+}
+
+function getFileStem(fileName) {
+  return fileName.replace(/\.[^.]+$/, '').trim()
+}
+
+function getUploadedDocumentTitle(fileName) {
+  const extension = fileName.split('.').pop()?.toLowerCase()
+
+  if (extension === 'pdf') {
+    return 'Uploaded PDF document'
+  }
+
+  if (extension === 'docx') {
+    return 'Uploaded Word document'
+  }
+
+  return 'Uploaded document'
+}
+
+function isWeakUploadTitle(title, fileName) {
+  const normalizedTitle = (title ?? '').trim().toLowerCase()
+  const normalizedStem = getFileStem(fileName).toLowerCase()
+
+  return (
+    !normalizedTitle ||
+    normalizedTitle === '(anonymous)' ||
+    normalizedTitle === 'anonymous' ||
+    normalizedTitle === 'untitled article' ||
+    normalizedTitle === normalizedStem
+  )
+}
+
+function getArticleDisplayTitle(article) {
+  if (!isUploadedArticle(article)) {
+    return article?.title ?? 'Untitled article'
+  }
+
+  const fileName = getUploadFileName(article)
+
+  if (isWeakUploadTitle(article?.title, fileName)) {
+    return getUploadedDocumentTitle(fileName)
+  }
+
+  return article.title
+}
+
+function hasExternalArticleUrl(article) {
+  return /^https?:\/\//.test(article?.url ?? '')
 }
 
 function getFocusLabel(focusValue) {
@@ -302,6 +416,16 @@ function getErrorForArticle(apiErrors, side) {
 function getInitialFilters() {
   return relationshipOptions.reduce(
     (filters, option) => ({ ...filters, [option.value]: true }),
+    {},
+  )
+}
+
+function getMatchCounts(matches) {
+  return relationshipOptions.reduce(
+    (counts, option) => ({
+      ...counts,
+      [option.value]: matches.filter((match) => match.label === option.value).length,
+    }),
     {},
   )
 }
@@ -329,6 +453,28 @@ function normalizeLabel(label) {
 
 function normalizeMatch(match, index) {
   const label = normalizeLabel(match.label ?? match.relationship)
+  const paragraphAIndex =
+    match.a_paragraph_index ??
+    match.aParagraphIndex ??
+    match.article_a_paragraph_index ??
+    match.paragraph_a_index ??
+    match.left_paragraph_index
+  const paragraphBIndex =
+    match.b_paragraph_index ??
+    match.bParagraphIndex ??
+    match.article_b_paragraph_index ??
+    match.paragraph_b_index ??
+    match.right_paragraph_index
+  const chunkAId =
+    match.a_chunk_id ??
+    match.article_a_chunk_id ??
+    match.chunk_a_id ??
+    match.left_chunk_id
+  const chunkBId =
+    match.b_chunk_id ??
+    match.article_b_chunk_id ??
+    match.chunk_b_id ??
+    match.right_chunk_id
   const sentenceAId =
     match.sentence_a_id ??
     match.article_a_sentence_id ??
@@ -340,12 +486,26 @@ function normalizeMatch(match, index) {
     match.b_sentence_id ??
     match.right_sentence_id
 
+  const aParagraphIndex = paragraphAIndex ?? null
+  const bParagraphIndex = paragraphBIndex ?? null
+
   return {
     ...match,
-    id: match.id ?? `${sentenceAId ?? 'A'}-${sentenceBId ?? 'B'}-${index}`,
+    id:
+      match.id ??
+      `${chunkAId ?? sentenceAId ?? 'A'}-${chunkBId ?? sentenceBId ?? 'B'}-${index}`,
     label,
+    paragraphAIndex,
+    paragraphBIndex,
+    chunkAId,
+    chunkBId,
+    pairNumber: match.pair_number ?? match.pairNumber ?? index + 1,
     sentenceAId,
     sentenceBId,
+    aParagraphIndex,
+    bParagraphIndex,
+    aTextPreview: match.a_text_preview ?? match.aTextPreview ?? null,
+    bTextPreview: match.b_text_preview ?? match.bTextPreview ?? null,
     explanation:
       match.explanation ??
       'This match was returned by the comparison pipeline.',
@@ -355,6 +515,14 @@ function normalizeMatch(match, index) {
 function getComparisonMatches(comparison) {
   return (comparison?.matches ?? comparison?.alignments ?? []).map(
     normalizeMatch,
+  )
+}
+
+function getMatchForParagraph(matches, side, paragraphIndex) {
+  return matches.find((match) =>
+    side === 'A'
+      ? match.paragraphAIndex === paragraphIndex
+      : match.paragraphBIndex === paragraphIndex,
   )
 }
 
@@ -368,6 +536,26 @@ function getMatchForSentence(matches, side, sentenceId) {
 
 function getSentenceText(article, sentenceId) {
   return article?.sentences?.find((sentence) => sentence.id === sentenceId)?.text
+}
+
+function getParagraphText(article, paragraphIndex) {
+  if (paragraphIndex == null) {
+    return undefined
+  }
+  return article?.paragraphs?.[paragraphIndex]
+}
+
+function getMatchedText(article, match, side) {
+  const preview = side === 'A' ? match.aTextPreview : match.bTextPreview
+  const paragraphIndex =
+    side === 'A' ? match.paragraphAIndex : match.paragraphBIndex
+  const sentenceId = side === 'A' ? match.sentenceAId : match.sentenceBId
+
+  return (
+    getParagraphText(article, paragraphIndex) ??
+    getSentenceText(article, sentenceId) ??
+    preview
+  )
 }
 
 function getCompareReadinessMessage(canCompare, isLoading) {
@@ -425,6 +613,12 @@ async function parseEventStream(response, onProgress) {
         onProgress(data)
       }
 
+      if (event === 'error') {
+        throw new Error(
+          data?.message ?? 'The backend could not complete the request.',
+        )
+      }
+
       if (event === 'result') {
         return data
       }
@@ -444,27 +638,86 @@ function clearFieldError(errors, fieldName) {
   return nextErrors
 }
 
+function PdfToolbox({ file, pdfInfo, wordStatus, onConvertWord, isLoading }) {
+  if (!isPdfFile(file)) {
+    return null
+  }
+
+  const isImagePdf = pdfInfo?.is_image_based
+  const typeLabel =
+    pdfInfo == null
+      ? null
+      : isImagePdf
+        ? 'Scanned / image PDF detected — OCR will be used.'
+        : 'Text PDF detected — text can be read directly.'
+
+  return (
+    <div className="pdf-toolbox">
+      {pdfInfo?.detecting && (
+        <p className="input-hint">Checking whether this PDF is scanned...</p>
+      )}
+      {typeLabel && (
+        <p className={`pdf-type-badge${isImagePdf ? ' pdf-type-badge--image' : ''}`}>
+          {typeLabel}
+        </p>
+      )}
+      {pdfInfo && !pdfInfo.ocr_available && isImagePdf && (
+        <p className="input-hint input-hint--warn">
+          OCR is not available on the server, so this scan may not be readable.
+        </p>
+      )}
+
+      <button
+        className="word-download-button"
+        type="button"
+        onClick={onConvertWord}
+        disabled={isLoading || wordStatus?.state === 'loading'}
+      >
+        {wordStatus?.state === 'loading'
+          ? 'Converting to Word...'
+          : 'Download as Word (.docx)'}
+      </button>
+
+      {wordStatus?.state === 'success' && (
+        <p className="input-hint input-hint--success">{wordStatus.message}</p>
+      )}
+      {wordStatus?.state === 'error' && (
+        <p className="field-error">{wordStatus.message}</p>
+      )}
+    </div>
+  )
+}
+
 function ArticleSourceField({
   side,
   title,
   mode,
   url,
+  text,
   file,
+  pdfInfo,
+  wordStatus,
   error,
   isLoading,
   onModeChange,
   onUrlChange,
+  onTextChange,
   onFileChange,
+  onConvertWord,
+  onClear,
 }) {
   const inputId = `article-${side.toLowerCase()}-url`
+  const textId = `article-${side.toLowerCase()}-text`
   const fileId = `article-${side.toLowerCase()}-file`
   const errorId = `article-${side.toLowerCase()}-error`
   const urlHost = getUrlHost(url)
+  const labelTarget =
+    mode === 'url' ? inputId : mode === 'text' ? textId : fileId
 
   return (
     <div className="field-group">
       <div className="field-header">
-        <label htmlFor={mode === 'url' ? inputId : fileId}>
+        <label htmlFor={labelTarget}>
           <span className={`field-number${side === 'B' ? ' field-number--b' : ''}`}>
             {side}
           </span>
@@ -490,22 +743,58 @@ function ArticleSourceField({
         </div>
       </div>
 
-      {mode === 'url' ? (
+      {mode === 'url' && (
         <>
-          <input
-            className="url-input"
-            id={inputId}
-            type="url"
-            value={url}
-            onChange={onUrlChange}
-            placeholder="https://news-outlet.com/article"
-            aria-describedby={error ? errorId : undefined}
-            aria-invalid={Boolean(error)}
-            disabled={isLoading}
-          />
+          <div className="input-with-action">
+            <input
+              className="url-input"
+              id={inputId}
+              type="url"
+              value={url}
+              onChange={onUrlChange}
+              placeholder="https://news-outlet.com/article"
+              aria-describedby={error ? errorId : undefined}
+              aria-invalid={Boolean(error)}
+              disabled={isLoading}
+            />
+            {url && (
+              <button type="button" onClick={onClear} disabled={isLoading}>
+                Clear
+              </button>
+            )}
+          </div>
           {urlHost && <p className="input-hint">Source: {urlHost}</p>}
         </>
-      ) : (
+      )}
+
+      {mode === 'text' && (
+        <>
+          <div className="input-with-action input-with-action--textarea">
+            <textarea
+              className="text-input"
+              id={textId}
+              value={text}
+              onChange={onTextChange}
+              rows={6}
+              placeholder="Paste the full article text here..."
+              aria-describedby={error ? errorId : undefined}
+              aria-invalid={Boolean(error)}
+              disabled={isLoading}
+            />
+            {text && (
+              <button type="button" onClick={onClear} disabled={isLoading}>
+                Clear
+              </button>
+            )}
+          </div>
+          <p className="input-hint">
+            {text.trim().length} characters. Paste the article body directly —
+            no link needed.
+          </p>
+        </>
+      )}
+
+      {mode === 'upload' && (
         <>
           <label
             className={`file-picker${file ? ' file-picker--selected' : ''}`}
@@ -522,9 +811,27 @@ function ArticleSourceField({
             />
             <span>{file ? file.name : 'Choose a PDF or Word file'}</span>
           </label>
+          {file && (
+            <button
+              className="clear-input-button"
+              type="button"
+              onClick={onClear}
+              disabled={isLoading}
+            >
+              Clear file
+            </button>
+          )}
           <p className="input-hint">
-            Use saved articles, paywalled pages, or subscription content.
+            Works with text PDFs, scanned/image PDFs (auto OCR), Word files,
+            paywalled pages, or subscription content.
           </p>
+          <PdfToolbox
+            file={file}
+            pdfInfo={pdfInfo}
+            wordStatus={wordStatus}
+            onConvertWord={onConvertWord}
+            isLoading={isLoading}
+          />
         </>
       )}
 
@@ -534,6 +841,33 @@ function ArticleSourceField({
         </p>
       )}
     </div>
+  )
+}
+
+function HighlightedParagraph({
+  paragraph,
+  match,
+  isVisible,
+  isSelected,
+  onSelectMatch,
+}) {
+  if (!isVisible) {
+    return null
+  }
+
+  return (
+    <button
+      className={`comparison-highlight comparison-highlight--${match.label}${
+        isSelected ? ' comparison-highlight--selected' : ''
+      }`}
+      type="button"
+      onClick={() => onSelectMatch(match.id)}
+      onFocus={() => onSelectMatch(match.id)}
+      onMouseEnter={() => onSelectMatch(match.id)}
+    >
+      <span className="comparison-highlight__number">{match.pairNumber}</span>
+      <span>{paragraph}</span>
+    </button>
   )
 }
 
@@ -548,20 +882,34 @@ function SentenceButton({
     return <span>{sentence.text} </span>
   }
 
-  if (!isVisible) {
-    return null
+  return (
+    <HighlightedParagraph
+      paragraph={sentence.text}
+      match={match}
+      isVisible={isVisible}
+      isSelected={isSelected}
+      onSelectMatch={onSelectMatch}
+    />
+  )
+}
+
+function ParagraphBlock({ paragraph, match, isSelected, onSelectMatch }) {
+  if (!match) {
+    return <p className="article-paragraph">{paragraph}</p>
   }
 
   return (
-    <button
-      className={`comparison-sentence comparison-sentence--${match.label}${
-        isSelected ? ' comparison-sentence--selected' : ''
-      }`}
-      type="button"
-      onClick={() => onSelectMatch(match.id)}
-    >
-      {sentence.text}
-    </button>
+    <p className="article-paragraph">
+      <button
+        className={`comparison-highlight comparison-paragraph comparison-highlight--${match.label}${
+          isSelected ? ' comparison-highlight--selected' : ''
+        }`}
+        type="button"
+        onClick={() => onSelectMatch(match.id)}
+      >
+        {paragraph}
+      </button>
+    </p>
   )
 }
 
@@ -576,6 +924,9 @@ function ArticlePanel({
   onSelectMatch,
 }) {
   if (article) {
+    const displayTitle = getArticleDisplayTitle(article)
+    const uploadFileName = getUploadFileName(article)
+    const canOpenOriginal = hasExternalArticleUrl(article)
     const sentencesByParagraph = (article.sentences ?? []).reduce(
       (groups, sentence) => {
         const paragraphIndex = sentence.paragraph_index ?? 0
@@ -595,29 +946,59 @@ function ArticlePanel({
             <p className="eyebrow">
               {label} / {article.source_domain ?? 'Unknown source'}
             </p>
-            <h2>{article.title ?? 'Untitled article'}</h2>
+            <h2>{displayTitle}</h2>
           </div>
         </div>
 
-        <a
-          className="article-source-link"
-          href={article.url}
-          target="_blank"
-          rel="noreferrer"
-        >
-          View original article <span aria-hidden="true">-&gt;</span>
-        </a>
+        {canOpenOriginal && (
+          <a
+            className="article-source-link"
+            href={article.url}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View original article <span aria-hidden="true">-&gt;</span>
+          </a>
+        )}
+
+        {!canOpenOriginal && uploadFileName && (
+          <p className="article-source-note">Uploaded file: {uploadFileName}</p>
+        )}
 
         <div className="article-copy">
           {article.paragraphs?.map((paragraph, paragraphIndex) => {
             const paragraphSentences = sentencesByParagraph[paragraphIndex] ?? []
+            const hasSentenceMatch = paragraphSentences.some((sentence) =>
+              getMatchForSentence(matches, side, sentence.id),
+            )
 
-            if (paragraphSentences.length === 0) {
-              return <p key={paragraph}>{paragraph}</p>
+            // Demo data highlights individual sentences; the live backend
+            // returns paragraph-chunk-level matches, so we highlight the whole
+            // paragraph in that case.
+            if (!hasSentenceMatch) {
+              const paragraphMatch = getMatchForParagraph(
+                matches,
+                side,
+                paragraphIndex,
+              )
+              const visibleMatch =
+                paragraphMatch && visibleLabels[paragraphMatch.label]
+                  ? paragraphMatch
+                  : null
+
+              return (
+                <ParagraphBlock
+                  key={paragraphIndex}
+                  paragraph={paragraph}
+                  match={visibleMatch}
+                  isSelected={visibleMatch?.id === selectedMatchId}
+                  onSelectMatch={onSelectMatch}
+                />
+              )
             }
 
             return (
-              <p key={paragraph}>
+              <p key={paragraphIndex} className="article-paragraph">
                 {paragraphSentences.map((sentence) => {
                   const match = getMatchForSentence(matches, side, sentence.id)
                   return (
@@ -687,9 +1068,6 @@ function ArticlePanel({
 function ComparisonControls({
   matches,
   visibleLabels,
-  selectedMatch,
-  articleA,
-  articleB,
   onToggleLabel,
   onResetFilters,
 }) {
@@ -697,81 +1075,178 @@ function ComparisonControls({
     return null
   }
 
+  const matchCounts = getMatchCounts(matches)
+
   return (
-    <section className="comparison-inspector" aria-labelledby="inspector-title">
-      <div className="filter-panel">
-        <div>
-          <p className="eyebrow">Relationship filters</p>
-          <h2 id="inspector-title">Comparison highlights</h2>
-        </div>
+    <section className="comparison-filters" aria-label="Highlight filters">
+      <p>Show:</p>
+      <div className="filter-controls">
+        {relationshipOptions.map((option) => (
+          <label
+            className={`filter-toggle filter-toggle--${option.value}`}
+            key={option.value}
+          >
+            <input
+              type="checkbox"
+              checked={visibleLabels[option.value]}
+              onChange={() => onToggleLabel(option.value)}
+            />
+            <span>
+              {option.label} {matchCounts[option.value]}
+            </span>
+          </label>
+        ))}
+      </div>
 
-        <div className="filter-controls" aria-label="Highlight filters">
-          {relationshipOptions.map((option) => (
-            <label
-              className={`filter-toggle filter-toggle--${option.value}`}
-              key={option.value}
-            >
-              <input
-                type="checkbox"
-                checked={visibleLabels[option.value]}
-                onChange={() => onToggleLabel(option.value)}
-              />
-              <span>{option.label}</span>
-            </label>
-          ))}
-        </div>
+      <button className="reset-filters-button" type="button" onClick={onResetFilters}>
+        Reset
+      </button>
+    </section>
+  )
+}
 
-        <button className="reset-filters-button" type="button" onClick={onResetFilters}>
-          Reset filters
+function MatchExplanationPanel({
+  selectedMatch,
+  matches,
+  articleA,
+  articleB,
+  onSelectMatch,
+  onClose,
+}) {
+  if (!selectedMatch) {
+    return null
+  }
+
+  const selectedIndex = matches.findIndex((match) => match.id === selectedMatch.id)
+  const previousMatch = selectedIndex > 0 ? matches[selectedIndex - 1] : null
+  const nextMatch =
+    selectedIndex >= 0 && selectedIndex < matches.length - 1
+      ? matches[selectedIndex + 1]
+      : null
+
+  return (
+    <aside className="explanation-panel" aria-live="polite">
+      <div className="explanation-panel__header">
+        <span className="match-number">Pair {selectedMatch.pairNumber}</span>
+        <span
+          className={`relationship-pill relationship-pill--${selectedMatch.label}`}
+        >
+          {
+            relationshipOptions.find(
+              (option) => option.value === selectedMatch.label,
+            )?.label
+          }
+        </span>
+        {typeof selectedMatch.score === 'number' && (
+          <span className="match-score">
+            Score {Math.round(selectedMatch.score * 100)}%
+          </span>
+        )}
+        <button
+          className="explanation-panel__close"
+          type="button"
+          onClick={onClose}
+          aria-label="Close evidence panel"
+        >
+          Close
         </button>
       </div>
 
-      <aside className="explanation-panel" aria-live="polite">
-        {selectedMatch ? (
-          <>
-            <div className="explanation-panel__header">
-              <span
-                className={`relationship-pill relationship-pill--${selectedMatch.label}`}
-              >
-                {
-                  relationshipOptions.find(
-                    (option) => option.value === selectedMatch.label,
-                  )?.label
-                }
-              </span>
-              {typeof selectedMatch.score === 'number' && (
-                <span className="match-score">
-                  Score {Math.round(selectedMatch.score * 100)}%
-                </span>
-              )}
-            </div>
+      <p>{selectedMatch.explanation}</p>
 
-            <p>{selectedMatch.explanation}</p>
+      <div className="match-nav">
+        <button
+          type="button"
+          onClick={() => previousMatch && onSelectMatch(previousMatch.id)}
+          disabled={!previousMatch}
+        >
+          Previous
+        </button>
+        <span>
+          {selectedIndex + 1} of {matches.length}
+        </span>
+        <button
+          type="button"
+          onClick={() => nextMatch && onSelectMatch(nextMatch.id)}
+          disabled={!nextMatch}
+        >
+          Next
+        </button>
+      </div>
 
-            <div className="matched-text">
-              <div>
-                <strong>Article A</strong>
-                <span>
-                  {getSentenceText(articleA, selectedMatch.sentenceAId) ??
-                    'Matched text unavailable.'}
-                </span>
+      <div className="matched-text">
+        <div>
+          <strong>Article A</strong>
+          <span>
+            {getMatchedText(articleA, selectedMatch, 'A') ??
+              'Matched text unavailable.'}
+          </span>
+        </div>
+        <div>
+          <strong>Article B</strong>
+          <span>
+            {getMatchedText(articleB, selectedMatch, 'B') ??
+              'Matched text unavailable.'}
+          </span>
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+function HistoryPanel({
+  historyItems,
+  isOpen,
+  onClose,
+  onRestore,
+  onDelete,
+  onClear,
+}) {
+  if (!isOpen) {
+    return null
+  }
+
+  return (
+    <section className="history-panel" aria-label="Comparison history">
+      <div className="history-panel__header">
+        <div>
+          <p className="eyebrow">Browser history</p>
+          <h2>Recent comparisons</h2>
+        </div>
+        <button type="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+
+      {historyItems.length > 0 ? (
+        <>
+          <div className="history-list">
+            {historyItems.map((item) => (
+              <div className="history-item" key={item.id}>
+                <button type="button" onClick={() => onRestore(item)}>
+                  <span>{item.label}</span>
+                  <small>{item.description}</small>
+                </button>
+                <button
+                  className="history-item__delete"
+                  type="button"
+                  onClick={() => onDelete(item.id)}
+                  aria-label={`Delete ${item.label} from history`}
+                >
+                  Delete
+                </button>
               </div>
-              <div>
-                <strong>Article B</strong>
-                <span>
-                  {getSentenceText(articleB, selectedMatch.sentenceBId) ??
-                    'Matched text unavailable.'}
-                </span>
-              </div>
-            </div>
-          </>
-        ) : (
-          <p>
-            Click any highlighted sentence to see the matching evidence and why
-            it was labelled.
-          </p>
-        )}
-      </aside>
+            ))}
+          </div>
+          <button className="history-clear-button" type="button" onClick={onClear}>
+            Clear history
+          </button>
+        </>
+      ) : (
+        <p className="history-empty">
+          Your recent comparisons will appear here after a successful run.
+        </p>
+      )}
     </section>
   )
 }
@@ -781,8 +1256,14 @@ function App() {
   const [articleBMode, setArticleBMode] = useState('url')
   const [articleAUrl, setArticleAUrl] = useState('')
   const [articleBUrl, setArticleBUrl] = useState('')
+  const [articleAText, setArticleAText] = useState('')
+  const [articleBText, setArticleBText] = useState('')
   const [articleAFile, setArticleAFile] = useState(null)
   const [articleBFile, setArticleBFile] = useState(null)
+  const [pdfInfoA, setPdfInfoA] = useState(null)
+  const [pdfInfoB, setPdfInfoB] = useState(null)
+  const [wordStatusA, setWordStatusA] = useState(null)
+  const [wordStatusB, setWordStatusB] = useState(null)
   const [focus, setFocus] = useState('general')
   const [formErrors, setFormErrors] = useState({})
   const [apiErrors, setApiErrors] = useState([])
@@ -793,50 +1274,134 @@ function App() {
   const [visibleLabels, setVisibleLabels] = useState(getInitialFilters)
   const [selectedMatchId, setSelectedMatchId] = useState(null)
   const [activeMobileArticle, setActiveMobileArticle] = useState('A')
-  const [usingDemoCopy, setUsingDemoCopy] = useState(false)
+  const [demoSamples, setDemoSamples] = useState([])
+  const [demoLoadError, setDemoLoadError] = useState('')
+  const [historyItems, setHistoryItems] = useState(loadComparisonHistory)
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const canCompare =
-    (articleAMode === 'url'
-      ? isValidHttpUrl(articleAUrl)
-      : isValidUpload(articleAFile)) &&
-    (articleBMode === 'url'
-      ? isValidHttpUrl(articleBUrl)
-      : isValidUpload(articleBFile))
-
-  function loadDemoArticles() {
-    const demoMatches = getComparisonMatches(demoArticles.comparison)
-
-    setArticleAMode('url')
-    setArticleBMode('url')
-    setArticleAUrl(demoArticles.urls.A)
-    setArticleBUrl(demoArticles.urls.B)
-    setArticleAFile(null)
-    setArticleBFile(null)
-    setFocus('general')
-    setFormErrors({})
-    setApiErrors([])
-    setProgress(null)
-    setArticles(demoArticles.articles)
-    setComparison(demoArticles.comparison)
-    setSelectedMatchId(demoMatches[0]?.id ?? null)
-    setActiveMobileArticle('A')
-    setUsingDemoCopy(true)
-    setStatusMessage(
-      'Demo articles loaded with Sprint 2 highlights. Click Compare articles to try the live backend.',
-    )
+  const inputSectionRef = useRef(null)
+  const resultsSectionRef = useRef(null)
+  function isSideReady(mode, url, text, file) {
+    if (mode === 'url') {
+      return isValidHttpUrl(url)
+    }
+    if (mode === 'text') {
+      return isValidText(text)
+    }
+    return isValidUpload(file)
   }
 
-  function showOfflineDemoFallback(message) {
-    const demoMatches = getComparisonMatches(demoArticles.comparison)
+  const canCompare =
+    isSideReady(articleAMode, articleAUrl, articleAText, articleAFile) &&
+    isSideReady(articleBMode, articleBUrl, articleBText, articleBFile)
 
+  useEffect(() => {
+    let isActive = true
+
+    async function loadDemoIndex() {
+      try {
+        const indexResponse = await fetch(demoIndexPath)
+
+        if (!indexResponse.ok) {
+          throw new Error('Demo index could not be loaded.')
+        }
+
+        const demoPaths = await indexResponse.json()
+        const samples = await Promise.all(
+          demoPaths.map(async (demoPath) => {
+            const response = await fetch(demoPath)
+
+            if (!response.ok) {
+              throw new Error(`Demo metadata could not be loaded: ${demoPath}`)
+            }
+
+            return response.json()
+          }),
+        )
+
+        if (isActive) {
+          setDemoSamples(samples)
+          setDemoLoadError('')
+        }
+      } catch (error) {
+        if (isActive) {
+          setDemoSamples([])
+          setDemoLoadError(error.message)
+        }
+      }
+    }
+
+    loadDemoIndex()
+
+    return () => {
+      isActive = false
+    }
+  }, [])
+
+  async function loadDemoSample(sample) {
+    setIsLoading(true)
     setProgress(null)
-    setArticles(demoArticles.articles)
-    setComparison(demoArticles.comparison)
-    setSelectedMatchId(demoMatches[0]?.id ?? null)
+    setArticles([])
+    setComparison(null)
+    setSelectedMatchId(null)
     setActiveMobileArticle('A')
     setApiErrors([])
-    setUsingDemoCopy(true)
-    setStatusMessage(message)
+    setFormErrors({})
+    setPdfInfoA(null)
+    setPdfInfoB(null)
+    setWordStatusA(null)
+    setWordStatusB(null)
+
+    try {
+      setFocus(sample.focus)
+
+      if (sample.kind === 'url') {
+        setArticleAMode('url')
+        setArticleBMode('url')
+        setArticleAUrl(sample.articleA.url)
+        setArticleBUrl(sample.articleB.url)
+        setArticleAText('')
+        setArticleBText('')
+        setArticleAFile(null)
+        setArticleBFile(null)
+      } else if (sample.kind === 'text') {
+        const [articleAText, articleBText] = await Promise.all([
+          readTextDemoAsset(sample.articleA),
+          readTextDemoAsset(sample.articleB),
+        ])
+
+        setArticleAMode('text')
+        setArticleBMode('text')
+        setArticleAUrl('')
+        setArticleBUrl('')
+        setArticleAText(articleAText)
+        setArticleBText(articleBText)
+        setArticleAFile(null)
+        setArticleBFile(null)
+      } else {
+        const [articleAFile, articleBFile] = await Promise.all([
+          createFileFromDemoAsset(sample.articleA),
+          createFileFromDemoAsset(sample.articleB),
+        ])
+
+        setArticleAMode('upload')
+        setArticleBMode('upload')
+        setArticleAUrl('')
+        setArticleBUrl('')
+        setArticleAText('')
+        setArticleBText('')
+        setArticleAFile(articleAFile)
+        setArticleBFile(articleBFile)
+        detectPdfType(articleAFile, setPdfInfoA)
+        detectPdfType(articleBFile, setPdfInfoB)
+      }
+
+      setStatusMessage(`${sample.label} demo inputs loaded. Click Compare articles to run the backend.`)
+    } catch (error) {
+      setStatusMessage(`Could not load demo inputs. ${error.message}`)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   function handleArticleAUrlChange(event) {
@@ -848,6 +1413,20 @@ function App() {
 
   function handleArticleBUrlChange(event) {
     setArticleBUrl(event.target.value)
+    setFormErrors((currentErrors) =>
+      clearFieldError(currentErrors, 'articleB'),
+    )
+  }
+
+  function handleArticleATextChange(event) {
+    setArticleAText(event.target.value)
+    setFormErrors((currentErrors) =>
+      clearFieldError(currentErrors, 'articleA'),
+    )
+  }
+
+  function handleArticleBTextChange(event) {
+    setArticleBText(event.target.value)
     setFormErrors((currentErrors) =>
       clearFieldError(currentErrors, 'articleB'),
     )
@@ -867,25 +1446,147 @@ function App() {
     )
   }
 
-  function handleArticleAFileChange(event) {
-    setArticleAFile(event.target.files?.[0] ?? null)
+  function clearArticleAInput() {
+    setArticleAUrl('')
+    setArticleAText('')
+    setArticleAFile(null)
+    setPdfInfoA(null)
+    setWordStatusA(null)
     setFormErrors((currentErrors) =>
       clearFieldError(currentErrors, 'articleA'),
     )
   }
 
-  function handleArticleBFileChange(event) {
-    setArticleBFile(event.target.files?.[0] ?? null)
+  function clearArticleBInput() {
+    setArticleBUrl('')
+    setArticleBText('')
+    setArticleBFile(null)
+    setPdfInfoB(null)
+    setWordStatusB(null)
     setFormErrors((currentErrors) =>
       clearFieldError(currentErrors, 'articleB'),
     )
   }
 
-  function validateArticleInput(mode, url, file) {
+  async function detectPdfType(file, setPdfInfo) {
+    if (!isPdfFile(file)) {
+      setPdfInfo(null)
+      return
+    }
+
+    setPdfInfo({ detecting: true })
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await fetch('/api/upload/pdf-type', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        setPdfInfo(null)
+        return
+      }
+
+      setPdfInfo(await response.json())
+    } catch {
+      setPdfInfo(null)
+    }
+  }
+
+  function handleArticleAFileChange(event) {
+    const file = event.target.files?.[0] ?? null
+    setArticleAFile(file)
+    setWordStatusA(null)
+    setPdfInfoA(null)
+    setFormErrors((currentErrors) =>
+      clearFieldError(currentErrors, 'articleA'),
+    )
+    detectPdfType(file, setPdfInfoA)
+  }
+
+  function handleArticleBFileChange(event) {
+    const file = event.target.files?.[0] ?? null
+    setArticleBFile(file)
+    setWordStatusB(null)
+    setPdfInfoB(null)
+    setFormErrors((currentErrors) =>
+      clearFieldError(currentErrors, 'articleB'),
+    )
+    detectPdfType(file, setPdfInfoB)
+  }
+
+  async function convertPdfToWord(file, setWordStatus) {
+    if (!isPdfFile(file)) {
+      setWordStatus({
+        state: 'error',
+        message: 'Word conversion is only available for PDF files.',
+      })
+      return
+    }
+
+    setWordStatus({ state: 'loading' })
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await fetch('/api/upload/pdf-to-word', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        let message = 'The PDF could not be converted to Word.'
+        try {
+          const errorPayload = await response.json()
+          const friendly = getFriendlyError(errorPayload?.detail ?? errorPayload)
+          message = `${friendly.title}: ${friendly.message}`
+        } catch {
+          // keep default message
+        }
+        setWordStatus({ state: 'error', message })
+        return
+      }
+
+      const blob = await response.blob()
+      const filename = getDownloadFilename(
+        response.headers.get('Content-Disposition'),
+        `${file.name.replace(/\.pdf$/i, '')}.docx`,
+      )
+
+      const objectUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectUrl
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(objectUrl)
+
+      setWordStatus({
+        state: 'success',
+        message: `Saved "${filename}". Check your downloads folder.`,
+      })
+    } catch (error) {
+      setWordStatus({
+        state: 'error',
+        message: `The PDF could not be converted to Word. ${error.message}`,
+      })
+    }
+  }
+
+  function validateArticleInput(mode, url, text, file) {
     if (mode === 'url') {
       return isValidHttpUrl(url)
         ? ''
         : 'Paste a complete article link beginning with http:// or https://.'
+    }
+
+    if (mode === 'text') {
+      return isValidText(text)
+        ? ''
+        : `Paste at least ${minTextChars} characters of article text.`
     }
 
     if (!file) {
@@ -907,6 +1608,20 @@ function App() {
     const usesUpload = articleAMode === 'upload' || articleBMode === 'upload'
 
     if (!usesUpload) {
+      const body = { focus }
+
+      if (articleAMode === 'text') {
+        body.article_a_text = articleAText.trim()
+      } else {
+        body.article_a_url = articleAUrl.trim()
+      }
+
+      if (articleBMode === 'text') {
+        body.article_b_text = articleBText.trim()
+      } else {
+        body.article_b_url = articleBUrl.trim()
+      }
+
       return {
         endpoint: '/api/compare/stream',
         options: {
@@ -914,11 +1629,7 @@ function App() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            article_a_url: articleAUrl.trim(),
-            article_b_url: articleBUrl.trim(),
-            focus,
-          }),
+          body: JSON.stringify(body),
         },
       }
     }
@@ -928,12 +1639,16 @@ function App() {
 
     if (articleAMode === 'url') {
       formData.append('article_a_url', articleAUrl.trim())
+    } else if (articleAMode === 'text') {
+      formData.append('article_a_text', articleAText.trim())
     } else {
       formData.append('article_a_file', articleAFile)
     }
 
     if (articleBMode === 'url') {
       formData.append('article_b_url', articleBUrl.trim())
+    } else if (articleBMode === 'text') {
+      formData.append('article_b_text', articleBText.trim())
     } else {
       formData.append('article_b_file', articleBFile)
     }
@@ -951,8 +1666,18 @@ function App() {
     event.preventDefault()
 
     const nextFormErrors = {
-      articleA: validateArticleInput(articleAMode, articleAUrl, articleAFile),
-      articleB: validateArticleInput(articleBMode, articleBUrl, articleBFile),
+      articleA: validateArticleInput(
+        articleAMode,
+        articleAUrl,
+        articleAText,
+        articleAFile,
+      ),
+      articleB: validateArticleInput(
+        articleBMode,
+        articleBUrl,
+        articleBText,
+        articleBFile,
+      ),
     }
 
     Object.keys(nextFormErrors).forEach((fieldName) => {
@@ -970,16 +1695,9 @@ function App() {
       setActiveMobileArticle('A')
       setApiErrors([])
       setProgress(null)
-      setUsingDemoCopy(false)
       setStatusMessage('')
       return
     }
-
-    const isDemoPair =
-      articleAMode === 'url' &&
-      articleBMode === 'url' &&
-      articleAUrl.trim() === demoArticles.urls.A &&
-      articleBUrl.trim() === demoArticles.urls.B
 
     setIsLoading(true)
     setArticles([])
@@ -992,7 +1710,6 @@ function App() {
       message: 'Starting comparison...',
       status: 'running',
     })
-    setUsingDemoCopy(false)
     setStatusMessage('Preparing comparison...')
 
     try {
@@ -1016,16 +1733,11 @@ function App() {
       const returnedErrors = data.errors ?? []
       const backendComparison = data.comparison ?? null
       const hasBackendMatches = getComparisonMatches(backendComparison).length > 0
-      const displayComparison =
-        hasBackendMatches || !isDemoPair
-          ? backendComparison
-          : demoArticles.comparison
-      const displayMatches = getComparisonMatches(displayComparison)
 
       setArticles(returnedArticles)
       setApiErrors(returnedErrors)
-      setComparison(displayComparison)
-      setSelectedMatchId(displayMatches[0]?.id ?? null)
+      setComparison(backendComparison)
+      setSelectedMatchId(null)
       setActiveMobileArticle('A')
       setProgress({
         percent: 100,
@@ -1034,11 +1746,20 @@ function App() {
       })
 
       if (returnedArticles.length > 0 && returnedErrors.length === 0) {
-        if (displayMatches.length > 0 && !hasBackendMatches && isDemoPair) {
-          setStatusMessage(
-            'Live article text loaded. Demo Sprint 2 highlights are shown until backend comparison results are available.',
-          )
-        } else if (displayMatches.length > 0) {
+        if (hasBackendMatches) {
+          const historyItem = buildHistoryItem({
+            focus: data.focus ?? focus,
+            articles: returnedArticles,
+            comparison: backendComparison,
+          })
+          setHistoryItems((currentItems) => {
+            const nextItems = [
+              historyItem,
+              ...currentItems.filter((item) => item.id !== historyItem.id),
+            ].slice(0, maxHistoryItems)
+            saveComparisonHistory(nextItems)
+            return nextItems
+          })
           setStatusMessage(
             `Live comparison result loaded with the "${getFocusLabel(data.focus)}" focus.`,
           )
@@ -1055,22 +1776,13 @@ function App() {
         setStatusMessage('These articles could not be processed.')
       }
     } catch (error) {
-      if (isDemoPair) {
-        showOfflineDemoFallback(
-          'Live backend was unavailable, so the offline demo copy was loaded.',
-        )
-      } else {
-        setArticles([])
-        setComparison(null)
-        setSelectedMatchId(null)
-        setActiveMobileArticle('A')
-        setApiErrors([])
-        setProgress(null)
-        setUsingDemoCopy(false)
-        setStatusMessage(
-          `Could not complete the comparison. ${error.message}`,
-        )
-      }
+      setArticles([])
+      setComparison(null)
+      setSelectedMatchId(null)
+      setActiveMobileArticle('A')
+      setApiErrors([])
+      setProgress(null)
+      setStatusMessage(`Could not complete the comparison. ${error.message}`)
     } finally {
       setIsLoading(false)
     }
@@ -1082,6 +1794,32 @@ function App() {
   const selectedMatch =
     comparisonMatches.find((match) => match.id === selectedMatchId) ?? null
   const readinessMessage = getCompareReadinessMessage(canCompare, isLoading)
+  const demoGroups = [
+    {
+      label: 'URL',
+      samples: demoSamples.filter((sample) => sample.kind === 'url'),
+    },
+    {
+      label: 'PDF',
+      samples: demoSamples.filter(
+        (sample) =>
+          sample.kind === 'upload' &&
+          sample.articleA?.fileName?.toLowerCase().endsWith('.pdf'),
+      ),
+    },
+    {
+      label: 'Word',
+      samples: demoSamples.filter(
+        (sample) =>
+          sample.kind === 'upload' &&
+          sample.articleA?.fileName?.toLowerCase().endsWith('.docx'),
+      ),
+    },
+    {
+      label: 'Text',
+      samples: demoSamples.filter((sample) => sample.kind === 'text'),
+    },
+  ]
 
   function handleToggleLabel(label) {
     setVisibleLabels((currentLabels) => ({
@@ -1094,20 +1832,119 @@ function App() {
     setVisibleLabels(getInitialFilters())
   }
 
+  function handleSelectMatch(matchId) {
+    setSelectedMatchId(matchId)
+  }
+
+  function handleRestoreHistory(item) {
+    setArticles(item.articles ?? [])
+    setComparison(item.comparison ?? null)
+    setFocus(item.focus ?? 'general')
+    setSelectedMatchId(null)
+    setActiveMobileArticle('A')
+    setVisibleLabels(getInitialFilters())
+    setApiErrors([])
+    setProgress(null)
+    setStatusMessage(`Restored comparison from ${new Date(item.saved_at).toLocaleString()}.`)
+    setIsHistoryOpen(false)
+  }
+
+  function handleClearHistory() {
+    saveComparisonHistory([])
+    setHistoryItems([])
+  }
+
+  function handleDeleteHistoryItem(itemId) {
+    setHistoryItems((currentItems) => {
+      const nextItems = currentItems.filter((item) => item.id !== itemId)
+      saveComparisonHistory(nextItems)
+      return nextItems
+    })
+  }
+
+  function scrollToInput() {
+    inputSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  function scrollToResults() {
+    resultsSectionRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    })
+  }
+
+  async function handleCopySummary() {
+    if (!comparisonMatches.length) {
+      return
+    }
+
+    const summary = buildComparisonSummary({
+      focus,
+      articleA,
+      articleB,
+      matches: comparisonMatches,
+      selectedMatch,
+    })
+    await copyTextToClipboard(summary)
+    setStatusMessage('Comparison summary copied to clipboard.')
+  }
+
+  function handleSaveResults() {
+    if (!articles.length && !comparison) {
+      return
+    }
+
+    const savedAt = new Date().toISOString()
+    const payload = {
+      saved_at: savedAt,
+      focus,
+      articles,
+      comparison,
+      selected_match_id: selectedMatchId,
+      visible_labels: visibleLabels,
+    }
+    const datePart = savedAt.slice(0, 10)
+
+    downloadJsonFile(payload, `comparison-results-${datePart}.json`)
+    setStatusMessage('Comparison results saved as a JSON file.')
+  }
+
   return (
     <div className="app-shell">
       <header className="site-header">
         <a className="brand" href="/" aria-label="Narrative Diff home">
-          <span className="brand-mark" aria-hidden="true">
-            ND
-          </span>
+          <img
+            className="brand-logo"
+            src="/narrative-diff-icon.svg"
+            alt=""
+            aria-hidden="true"
+          />
           <span>Narrative Diff</span>
         </a>
-        <span className="sprint-label">Sprint 2 prototype</span>
+        <div className="header-actions">
+          <button
+            className="history-button"
+            type="button"
+            onClick={() => setIsHistoryOpen((isOpen) => !isOpen)}
+          >
+            History
+            {historyItems.length > 0 && <span>{historyItems.length}</span>}
+          </button>
+          <span className="sprint-label">Sprint 2 prototype</span>
+        </div>
       </header>
 
       <main>
-        <section className="hero-section">
+        <HistoryPanel
+          historyItems={historyItems}
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
+          onRestore={handleRestoreHistory}
+          onDelete={handleDeleteHistoryItem}
+          onClear={handleClearHistory}
+        />
+
+        <section className="hero-section" ref={inputSectionRef}>
           <p className="eyebrow">Compare reporting. See the difference.</p>
           <h1>How does the story change between news outlets?</h1>
           <p className="hero-copy">
@@ -1116,21 +1953,46 @@ function App() {
           </p>
 
           <div className="demo-prompt">
-            <div>
-              <strong>Need a reliable demo?</strong>
-              <span>
-                Load the Al Jazeera and ABC example. If the backend is unavailable,
-                the page falls back to offline demo copy.
-              </span>
+            <div className="demo-prompt__copy">
+              <strong>Try sample inputs</strong>
             </div>
-            <button
-              className="demo-button"
-              type="button"
-              onClick={loadDemoArticles}
-              disabled={isLoading}
-            >
-              Load demo articles
-            </button>
+            <div className="demo-buttons" aria-label="Demo input examples">
+              {demoSamples.length > 0 ? (
+                <>
+                  {demoGroups.map((group) => (
+                    <label className="demo-select-label" key={group.label}>
+                      {group.label}
+                      <select
+                        className="demo-select"
+                        value=""
+                        onChange={(event) => {
+                          const selectedSample = group.samples.find(
+                            (sample) => sample.id === event.target.value,
+                          )
+                          if (selectedSample) {
+                            loadDemoSample(selectedSample)
+                          }
+                        }}
+                        disabled={isLoading || group.samples.length === 0}
+                      >
+                        <option value="" disabled>
+                          Choose pair
+                        </option>
+                        {group.samples.map((sample) => (
+                          <option key={sample.id} value={sample.id}>
+                            {sample.shortLabel ?? sample.description}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </>
+              ) : (
+                <span className="demo-load-status">
+                  {demoLoadError || 'Loading demo inputs...'}
+                </span>
+              )}
+            </div>
           </div>
 
           <form className="compare-form" onSubmit={handleSubmit} noValidate>
@@ -1140,12 +2002,18 @@ function App() {
                 title="First article"
                 mode={articleAMode}
                 url={articleAUrl}
+                text={articleAText}
                 file={articleAFile}
+                pdfInfo={pdfInfoA}
+                wordStatus={wordStatusA}
                 error={formErrors.articleA}
                 isLoading={isLoading}
                 onModeChange={handleArticleAModeChange}
                 onUrlChange={handleArticleAUrlChange}
+                onTextChange={handleArticleATextChange}
                 onFileChange={handleArticleAFileChange}
+                onConvertWord={() => convertPdfToWord(articleAFile, setWordStatusA)}
+                onClear={clearArticleAInput}
               />
 
               <ArticleSourceField
@@ -1153,12 +2021,18 @@ function App() {
                 title="Second article"
                 mode={articleBMode}
                 url={articleBUrl}
+                text={articleBText}
                 file={articleBFile}
+                pdfInfo={pdfInfoB}
+                wordStatus={wordStatusB}
                 error={formErrors.articleB}
                 isLoading={isLoading}
                 onModeChange={handleArticleBModeChange}
                 onUrlChange={handleArticleBUrlChange}
+                onTextChange={handleArticleBTextChange}
                 onFileChange={handleArticleBFileChange}
+                onConvertWord={() => convertPdfToWord(articleBFile, setWordStatusB)}
+                onClear={clearArticleBInput}
               />
             </div>
 
@@ -1213,31 +2087,68 @@ function App() {
                 </div>
               </div>
             )}
+
+            {articles.length > 0 && (
+              <button
+                className="jump-button"
+                type="button"
+                onClick={scrollToResults}
+              >
+                Jump to results
+              </button>
+            )}
           </form>
         </section>
 
-        <section className="results-section" aria-labelledby="results-title">
+        <section
+          className="results-section"
+          aria-labelledby="results-title"
+          ref={resultsSectionRef}
+        >
           <div className="section-heading">
             <div>
               <p className="eyebrow">Comparison view</p>
               <h2 id="results-title">Matched article evidence</h2>
             </div>
-            <p>
-              Review the source text and inspect highlighted similarities or
-              differences.
-            </p>
+            <div className="section-heading__actions">
+              <p>
+                Review the source text and inspect highlighted similarities or
+                differences.
+              </p>
+              <button
+                className="save-results-button"
+                type="button"
+                onClick={handleSaveResults}
+                disabled={!articles.length && !comparison}
+              >
+                Save results
+              </button>
+              <div className="section-button-row">
+                <button
+                  className="save-results-button"
+                  type="button"
+                  onClick={handleCopySummary}
+                  disabled={!comparisonMatches.length}
+                >
+                  Copy summary
+                </button>
+                <button
+                  className="save-results-button"
+                  type="button"
+                  onClick={scrollToInput}
+                >
+                  Back to input
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div className="highlight-legend" aria-label="Highlight legend">
-            {relationshipOptions.map((option) => (
-              <span
-                className={`legend-item legend-item--${option.value}`}
-                key={option.value}
-              >
-                {option.label}
-              </span>
-            ))}
-          </div>
+          <ComparisonControls
+            matches={comparisonMatches}
+            visibleLabels={visibleLabels}
+            onToggleLabel={handleToggleLabel}
+            onResetFilters={handleResetFilters}
+          />
 
           <div className="mobile-article-tabs" aria-label="Article view">
             {['A', 'B'].map((side) => (
@@ -1256,61 +2167,69 @@ function App() {
             ))}
           </div>
 
-          <div className="article-grid">
-            <div
-              className={
-                activeMobileArticle === 'A'
-                  ? 'article-grid__item'
-                  : 'article-grid__item article-grid__item--inactive-mobile'
-              }
-            >
-              <ArticlePanel
-                article={articleA}
-                error={getErrorForArticle(apiErrors, 'A')}
-                label="Article A"
-                side="A"
-                matches={comparisonMatches}
-                visibleLabels={visibleLabels}
-                selectedMatchId={selectedMatchId}
-                onSelectMatch={setSelectedMatchId}
-              />
+          {!selectedMatch && comparisonMatches.length > 0 && (
+            <p className="match-selection-hint">
+              Tip: click any highlighted paragraph pair to open its evidence panel.
+            </p>
+          )}
+
+          <div
+            className={
+              selectedMatch
+                ? 'results-layout results-layout--with-panel'
+                : 'results-layout'
+            }
+          >
+            <div className="article-grid">
+              <div
+                className={
+                  activeMobileArticle === 'A'
+                    ? 'article-grid__item'
+                    : 'article-grid__item article-grid__item--inactive-mobile'
+                }
+              >
+                <ArticlePanel
+                  article={articleA}
+                  error={getErrorForArticle(apiErrors, 'A')}
+                  label="Article A"
+                  side="A"
+                  matches={comparisonMatches}
+                  visibleLabels={visibleLabels}
+                  selectedMatchId={selectedMatchId}
+                  onSelectMatch={handleSelectMatch}
+                />
+              </div>
+              <div
+                className={
+                  activeMobileArticle === 'B'
+                    ? 'article-grid__item'
+                    : 'article-grid__item article-grid__item--inactive-mobile'
+                }
+              >
+                <ArticlePanel
+                  article={articleB}
+                  error={getErrorForArticle(apiErrors, 'B')}
+                  label="Article B"
+                  side="B"
+                  matches={comparisonMatches}
+                  visibleLabels={visibleLabels}
+                  selectedMatchId={selectedMatchId}
+                  onSelectMatch={handleSelectMatch}
+                />
+              </div>
             </div>
-            <div
-              className={
-                activeMobileArticle === 'B'
-                  ? 'article-grid__item'
-                  : 'article-grid__item article-grid__item--inactive-mobile'
-              }
-            >
-              <ArticlePanel
-                article={articleB}
-                error={getErrorForArticle(apiErrors, 'B')}
-                label="Article B"
-                side="B"
+
+            <div className="sticky-explanation-slot">
+              <MatchExplanationPanel
+                selectedMatch={selectedMatch}
                 matches={comparisonMatches}
-                visibleLabels={visibleLabels}
-                selectedMatchId={selectedMatchId}
-                onSelectMatch={setSelectedMatchId}
+                articleA={articleA}
+                articleB={articleB}
+                onSelectMatch={handleSelectMatch}
+                onClose={() => setSelectedMatchId(null)}
               />
             </div>
           </div>
-
-          <ComparisonControls
-            matches={comparisonMatches}
-            visibleLabels={visibleLabels}
-            selectedMatch={selectedMatch}
-            articleA={articleA}
-            articleB={articleB}
-            onToggleLabel={handleToggleLabel}
-            onResetFilters={handleResetFilters}
-          />
-
-          {articles.length > 0 && usingDemoCopy && (
-            <p className="demo-disclaimer">
-              Demo copy is a short paraphrased sample prepared for offline
-              presentation. The links above open the original reporting.
-            </p>
-          )}
         </section>
       </main>
 

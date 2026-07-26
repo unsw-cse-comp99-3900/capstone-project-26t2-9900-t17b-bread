@@ -19,7 +19,12 @@ async def stream_with_progress(
     *,
     progress_queue: asyncio.Queue[dict[str, Any] | None],
 ) -> AsyncIterator[str]:
-    """Yield SSE progress events, then a final ``result`` event."""
+    """Yield SSE progress events, then a terminal ``result`` (or ``error``) event.
+
+    The runner is expected to always push ``None`` into ``progress_queue`` when it
+    finishes (usually via ``finally``). If the runner raises, we still emit a
+    terminal ``error`` event so the client stops waiting instead of hanging.
+    """
     task = asyncio.create_task(runner())
 
     while True:
@@ -28,7 +33,20 @@ async def stream_with_progress(
             break
         yield sse_event("progress", item)
 
-    result = await task
+    try:
+        result = await task
+    except Exception as exc:  # noqa: BLE001 - surface any runner failure to client
+        yield sse_event(
+            "error",
+            {
+                "message": (
+                    "The server could not complete the request. "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            },
+        )
+        return
+
     yield sse_event("result", result)
 
 

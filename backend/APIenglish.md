@@ -35,8 +35,10 @@ uvicorn app.main:app --reload
 | `GET` | `/health/db` | Database connectivity check | 1 |
 | `POST` | `/api/fetch` | Fetch and clean a single URL article (preview) | 1 |
 | `POST` | `/api/fetch/stream` | Same as above with live English progress (SSE) | 1 |
-| `POST` | `/api/upload` | Upload PDF/Word and extract body text | 1 |
+| `POST` | `/api/upload` | Upload PDF/Word and extract body text (auto-OCR for scans) | 1 |
 | `POST` | `/api/upload/stream` | Same as above with live English progress (SSE) | 1 |
+| `POST` | `/api/upload/pdf-type` | Detect if a PDF is text-based or a scanned image PDF | 1 |
+| `POST` | `/api/upload/pdf-to-word` | OCR a scanned/image PDF and download a cleaned Word (.docx) | 1 |
 | `POST` | `/api/compare` | Compare two URL articles | 1 |
 | `POST` | `/api/compare/stream` | Same as above with live English progress (SSE) | 1 |
 | `POST` | `/api/compare/files` | Compare two articles (URLs and/or uploaded files) | 1 |
@@ -153,11 +155,97 @@ Upload a PDF (`.pdf`) or Word (`.docx`) document and extract readable article te
 
 **Error `422`:** Same shape as `/api/fetch`; `stage` may be `upload`.
 
-### 7. `POST /api/compare` (URL main endpoint)
+> Text PDFs are read directly. Scanned/image PDFs are detected automatically
+> and read with OCR (requires the Tesseract engine on the server). If OCR is
+> unavailable, the error `code` is `ocr_unavailable`.
 
-Use this when **both articles are URLs**.
+### 6a. `POST /api/upload/pdf-type`
 
-**Request body:**
+Detect whether a PDF is **text-based** (selectable text) or an **image-based**
+(scanned) PDF, so the frontend can choose the right flow.
+
+**Request:** `multipart/form-data` with a single `file` field (must be `.pdf`).
+
+**Success `200`:**
+
+```json
+{
+  "pdf_type": "image",
+  "is_image_based": true,
+  "page_count": 3,
+  "chars_per_page": 4.0,
+  "pages_with_images": 3,
+  "ocr_available": true,
+  "recommended_endpoint": "/api/upload/pdf-to-word"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pdf_type` | string | `"text"` or `"image"` |
+| `is_image_based` | boolean | `true` when the PDF is scanned and needs OCR |
+| `page_count` | number | Number of pages |
+| `chars_per_page` | number | Average directly-extractable characters per page |
+| `pages_with_images` | number | Pages that contain embedded images |
+| `ocr_available` | boolean | Whether the server can OCR image PDFs right now |
+| `recommended_endpoint` | string | `/api/upload` (text) or `/api/upload/pdf-to-word` (scan) |
+
+### 6b. `POST /api/upload/pdf-to-word`
+
+Convert a **scanned/image PDF** into a cleaned, downloadable **Word (.docx)**
+file. Pages are OCR'd, then page numbers, repeated headers/footers, and symbol
+noise are removed so only the key text remains (also fed to the comparison
+pipeline). Text-based PDFs are also accepted (their text is exported directly).
+
+**Request:** `multipart/form-data` with a single `file` field (`.pdf`).
+
+**Success `200`:** the response body is the **`.docx` binary** (not JSON).
+
+| Header | Description |
+|--------|-------------|
+| `Content-Type` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` |
+| `Content-Disposition` | `attachment; filename*=UTF-8''<name>.docx` |
+| `X-Extracted-Chars` | Number of cleaned characters extracted |
+| `X-Extracted-Text-Preview` | URL-encoded preview (first ~180 chars) |
+
+**Error `422`:** JSON `{ "detail": { stage, code, message, ... } }`. Common `code` values:
+`ocr_unavailable`, `ocr_failed`, `ocr_no_text_found`, `upload_unsupported_type`.
+
+**Frontend download example:**
+
+```javascript
+async function convertScanToWord(pdfFile) {
+  const form = new FormData();
+  form.append("file", pdfFile);
+
+  const res = await fetch("http://localhost:8000/api/upload/pdf-to-word", {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    const { detail } = await res.json();
+    throw new Error(detail.message);
+  }
+
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename\*=UTF-8''(.+)$/);
+  const filename = match ? decodeURIComponent(match[1]) : "converted.docx";
+
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+```
+
+### 7. `POST /api/compare` (URL and/or pasted-text endpoint)
+
+Use this when each article is supplied as **a URL or as pasted plain text** (no file upload). You can mix the two (e.g. URL for A, pasted text for B).
+
+**Request body (URLs):**
 
 ```json
 {
@@ -167,11 +255,25 @@ Use this when **both articles are URLs**.
 }
 ```
 
+**Request body (pasted text):**
+
+```json
+{
+  "article_a_text": "Full article body pasted by the user...",
+  "article_b_text": "Full article body of the second story...",
+  "focus": "general"
+}
+```
+
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `article_a_url` | string | Yes | URL for article A |
-| `article_b_url` | string | Yes | URL for article B |
+| `article_a_url` | string | No* | URL for article A |
+| `article_b_url` | string | No* | URL for article B |
+| `article_a_text` | string | No* | Pasted plain-text body for article A |
+| `article_b_text` | string | No* | Pasted plain-text body for article B |
 | `focus` | string | No | Comparison focus; default `"general"` |
+
+\* Each side (A/B) must supply **either** a URL or pasted text. If both are given for one side, the pasted text wins. Missing both for a side returns `422`. Pasted text has `source_type: "text"` and `url` like `pasted-text://article-a`. Text under 20 characters returns a per-article `text_too_short` (or `text_empty`) validation error.
 
 **Allowed `focus` values:** `general`, `political`, `sentiment`, `economic`, `social`
 
@@ -260,12 +362,14 @@ Use when **either article** comes from an uploaded PDF/Word file. Each side must
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `article_a_url` | string | No* | URL for article A |
+| `article_a_text` | string | No* | Pasted plain-text body for article A |
 | `article_a_file` | file | No* | PDF/Word file for article A |
 | `article_b_url` | string | No* | URL for article B |
+| `article_b_text` | string | No* | Pasted plain-text body for article B |
 | `article_b_file` | file | No* | PDF/Word file for article B |
 | `focus` | string | No | Comparison focus; default `general` |
 
-\* Each side (A/B) must supply a URL or file.
+\* Each side (A/B) must supply exactly one of URL, pasted text, or file. Providing more than one for a side returns `400`.
 
 **Example: file A + URL B**
 
@@ -384,7 +488,9 @@ All errors include `stage`, `code`, and `message` (English). Branch on **`code`*
 | `url_missing` | URL is empty | Please enter an article URL |
 | `url_invalid_scheme` | Not http/https | URL must start with http:// or https:// |
 | `url_missing_host` | Missing host | Please enter a complete URL |
-| `input_missing` | Neither URL nor file provided | Provide a URL or upload PDF/Word |
+| `input_missing` | No source provided | Provide a URL, pasted text, or upload PDF/Word |
+| `text_empty` | Pasted text is empty | Paste the article content before comparing |
+| `text_too_short` | Pasted text under 20 chars | Paste the full article body, not just the headline |
 
 #### 10.2 Network (`stage: fetch`)
 
@@ -416,6 +522,15 @@ All errors include `stage`, `code`, and `message` (English). Branch on **`code`*
 | `upload_file_too_large` | File too large | Use a file under 10MB |
 | `upload_parse_failed` | Parse failed | File may be corrupted or password-protected |
 | `upload_empty_document` | No readable text | Check the document contents |
+
+#### 10.5 OCR / scanned PDFs (`stage: upload`)
+
+| `code` | Meaning | Suggested UI |
+|--------|---------|--------------|
+| `ocr_unavailable` | Tesseract not installed on server | OCR unavailable; upload a text PDF/Word |
+| `ocr_failed` | OCR could not read the scan | Scan quality too low; try a clearer file |
+| `ocr_no_text_found` | OCR ran but found no text | Pages may be blank or unreadable |
+| `pdf_not_image_based` | PDF already has selectable text | Use `/api/upload` instead |
 
 ### 11. Response field reference
 
@@ -596,5 +711,7 @@ A: Set in `backend/.env`: `CORS_ORIGINS=http://localhost:YOUR_PORT`
 | 2026-06-23 | Sprint 1 | Initial: fetch, compare, health |
 | 2026-06-25 | Sprint 1 | Split ZH/EN docs; added `/health/db`, `session_token` |
 | 2026-06-29 | Sprint 1+ | PDF/Word upload, SSE English progress, structured error `code` |
+| 2026-07-16 | Sprint 1+ | Image/scanned PDF detection, OCR + noise cleaning, `pdf-to-word` download |
+| 2026-07-16 | Sprint 1+ | Pasted-text article input (`article_a_text`/`article_b_text`) on compare endpoints |
 
 ---

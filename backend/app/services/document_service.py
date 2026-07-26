@@ -11,6 +11,8 @@ from pypdf import PdfReader
 from app.config import Settings, get_settings
 from app.schemas.article import RawArticle
 from app.services.errors import ErrorCode, PipelineError, PipelineStage
+from app.services.ocr_service import run_ocr
+from app.services.pdf_analysis import analyze_pdf
 from app.services.progress import ProgressTracker
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx"}
@@ -60,19 +62,44 @@ def validate_upload_file(
     return ext
 
 
-def _parse_pdf(content: bytes) -> tuple[str | None, str]:
+def _pdf_metadata_title(content: bytes) -> str | None:
     try:
         reader = PdfReader(io.BytesIO(content))
-        pages = [page.extract_text() or "" for page in reader.pages]
-        body = "\n\n".join(part.strip() for part in pages if part.strip()).strip()
-        title = (reader.metadata.title or None) if reader.metadata else None
-        return title, body
-    except Exception as exc:  # noqa: BLE001 - surface as upload parse failure
-        raise PipelineError(
-            PipelineStage.UPLOAD,
-            ErrorCode.UPLOAD_PARSE_FAILED,
-            article_ref=None,
-        ) from exc
+        return (reader.metadata.title or None) if reader.metadata else None
+    except Exception:  # noqa: BLE001 - title is best-effort only
+        return None
+
+
+def _parse_pdf(
+    content: bytes,
+    *,
+    article_ref: str | None = None,
+    settings: Settings | None = None,
+) -> tuple[str | None, str]:
+    """Extract text from a PDF, using OCR automatically for scanned/image PDFs."""
+    settings = settings or get_settings()
+    analysis = analyze_pdf(content, settings=settings, article_ref=article_ref)
+
+    if analysis.is_image_based:
+        # Scanned / image PDF -> OCR + noise cleaning.
+        ocr = run_ocr(content, settings=settings, article_ref=article_ref)
+        return _pdf_metadata_title(content), ocr.cleaned_text
+
+    body = analysis.extracted_text
+    if not body.strip():
+        # Fallback to pypdf if PyMuPDF returned nothing for a "text" PDF.
+        try:
+            reader = PdfReader(io.BytesIO(content))
+            pages = [page.extract_text() or "" for page in reader.pages]
+            body = "\n\n".join(part.strip() for part in pages if part.strip()).strip()
+        except Exception as exc:  # noqa: BLE001 - surface as upload parse failure
+            raise PipelineError(
+                PipelineStage.UPLOAD,
+                ErrorCode.UPLOAD_PARSE_FAILED,
+                article_ref=article_ref,
+            ) from exc
+
+    return _pdf_metadata_title(content), body
 
 
 def _parse_docx(content: bytes) -> tuple[str | None, str]:
@@ -110,7 +137,7 @@ def parse_uploaded_document(
         pass
 
     if ext == ".pdf":
-        title, body_text = _parse_pdf(content)
+        title, body_text = _parse_pdf(content, article_ref=article_ref, settings=settings)
     else:
         title, body_text = _parse_docx(content)
 
@@ -132,6 +159,66 @@ def parse_uploaded_document(
         body_text=body_text,
         source_type="upload",
     )
+
+
+def convert_image_pdf_to_word(
+    content: bytes,
+    filename: str | None,
+    *,
+    settings: Settings | None = None,
+    article_ref: str | None = None,
+    require_image_pdf: bool = True,
+) -> tuple[bytes, str, str]:
+    """Convert a (scanned) image PDF into a cleaned Word document.
+
+    Returns ``(docx_bytes, download_filename, cleaned_text)``.
+
+    OCR is used to read the scanned pages, noise is removed, and the key text
+    is written into a .docx. When ``require_image_pdf`` is True, a text-based
+    PDF is rejected (``PDF_NOT_IMAGE_BASED``) so the caller can point users at
+    the faster direct-text upload path instead.
+    """
+    from app.services.ocr_service import run_ocr
+    from app.services.word_export_service import build_docx, download_filename_for
+
+    settings = settings or get_settings()
+    validate_upload_file(filename, content, settings=settings, article_ref=article_ref)
+
+    ext = _extension_of(filename)
+    if ext != ".pdf":
+        raise PipelineError(
+            PipelineStage.UPLOAD,
+            ErrorCode.UPLOAD_UNSUPPORTED_TYPE,
+            article_ref=article_ref,
+        )
+
+    analysis = analyze_pdf(content, settings=settings, article_ref=article_ref)
+    if require_image_pdf and not analysis.is_image_based:
+        raise PipelineError(
+            PipelineStage.UPLOAD,
+            ErrorCode.PDF_NOT_IMAGE_BASED,
+            article_ref=article_ref,
+        )
+
+    if analysis.is_image_based:
+        cleaned_text = run_ocr(content, settings=settings, article_ref=article_ref).cleaned_text
+    else:
+        cleaned_text = analysis.extracted_text
+
+    if not cleaned_text.strip():
+        raise PipelineError(
+            PipelineStage.UPLOAD,
+            ErrorCode.OCR_NO_TEXT_FOUND,
+            article_ref=article_ref,
+        )
+
+    title = _pdf_metadata_title(content)
+    if not title:
+        title = Path(filename or "converted").stem.replace("_", " ").replace("-", " ").strip() or None
+
+    docx_bytes = build_docx(cleaned_text, title=title)
+    download_name = download_filename_for(filename, title)
+    return docx_bytes, download_name, cleaned_text
 
 
 async def parse_uploaded_document_async(
