@@ -32,29 +32,33 @@ class Article(Base):
     )
 
 
-class UserSession(Base):
-    """``user_sessions`` table — session token + compared article URLs."""
+class ParagraphChunk(Base):
+    """``paragraph_chunks`` table — per-paragraph text for one article."""
 
-    __tablename__ = "user_sessions"
+    __tablename__ = "paragraph_chunks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    session_token: Mapped[str] = mapped_column(String(255), nullable=False)
-    article_a_url: Mapped[str] = mapped_column(Text, nullable=False)
-    article_b_url: Mapped[str] = mapped_column(Text, nullable=False)
+    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id", ondelete="CASCADE"))
+    paragraph_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    text_content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp()
     )
 
-class EmbeddingCollection(Base):
-    """``embeddings_collection`` table — stores semantic vectors for article sentences."""
 
-    __tablename__ = "embeddings_collection"
+class Embedding(Base):
+    """``embeddings`` table — SBERT vector for one paragraph chunk."""
+
+    __tablename__ = "embeddings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    article_id: Mapped[int] = mapped_column(ForeignKey("articles.id", ondelete="CASCADE"))
-    sentence_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    text_content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(ARRAY(Float), nullable=False)
+    chunk_id: Mapped[int] = mapped_column(ForeignKey("paragraph_chunks.id", ondelete="CASCADE"))
+    vector: Mapped[list[float]] = mapped_column(ARRAY(Float), nullable=False)
+    model_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )
+
 
 class ComparisonResult(Base):
     """``comparison_results`` table — stores the cross-mapping alignment matrix."""
@@ -62,16 +66,27 @@ class ComparisonResult(Base):
     __tablename__ = "comparison_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    session_id: Mapped[int] = mapped_column(ForeignKey("user_sessions.id", ondelete="CASCADE"))
-    article_a_id: Mapped[int] = mapped_column(ForeignKey("articles.id"))
-    article_b_id: Mapped[int] = mapped_column(ForeignKey("articles.id"))
-    alignment_matrix: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    similarity_score: Mapped[float] = mapped_column(Numeric(4, 2), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.current_timestamp()
-    )
-    
+    article_a_id: Mapped[int | None] = mapped_column(ForeignKey("articles.id"), nullable=True)
+    article_b_id: Mapped[int | None] = mapped_column(ForeignKey("articles.id"), nullable=True)
+    result_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
     review_status: Mapped[str] = mapped_column(
         String(50), server_default="pending", nullable=False
     )
     admin_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )
+
+
+class History(Base):
+    """``history`` table — saved/bookmarked comparison results."""
+
+    __tablename__ = "history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    comparison_id: Mapped[int] = mapped_column(
+        ForeignKey("comparison_results.id", ondelete="CASCADE")
+    )
+    saved_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.current_timestamp()
+    )

@@ -76,7 +76,7 @@ def main() -> int:
         tables = [row[0] for row in cur.fetchall()]
         print("tables:", tables or "(none)")
 
-        needed = {"articles", "user_sessions"}
+        needed = {"articles", "paragraph_chunks", "embeddings", "comparison_results", "history"}
         missing = needed - set(tables)
         if missing and args.init:
             if not INIT_SQL.exists():
@@ -94,7 +94,7 @@ def main() -> int:
             print("missing tables:", sorted(missing))
             print("run: python scripts/check_db.py --init")
 
-        for name in ("articles", "user_sessions"):
+        for name in ("articles", "paragraph_chunks", "embeddings", "comparison_results", "history"):
             if name in tables:
                 cur.execute(f"SELECT COUNT(*) FROM {name}")
                 print(f"{name} rows:", cur.fetchone()[0])

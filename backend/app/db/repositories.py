@@ -9,7 +9,7 @@ from __future__ import annotations
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Article, UserSession
+from app.db.models import Article
 from app.schemas.article import ProcessedArticle
 
 
@@ -49,26 +49,3 @@ class ArticleRepository:
         )
         result = await self.session.execute(stmt)
         return int(result.scalar_one())
-
-
-class UserSessionRepository:
-    """Writes for the ``user_sessions`` table."""
-
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
-    async def record(
-        self,
-        session_token: str,
-        article_a_url: str,
-        article_b_url: str,
-    ) -> int:
-        """Record a comparison request, returning the new row id."""
-        row = UserSession(
-            session_token=session_token,
-            article_a_url=article_a_url,
-            article_b_url=article_b_url,
-        )
-        self.session.add(row)
-        await self.session.flush()
-        return int(row.id)
