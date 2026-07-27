@@ -42,10 +42,13 @@ def to_psycopg_url(url: str) -> str:
 
 def run_sql_file(cur, sql_path: Path) -> None:
     """Execute a multi-statement SQL file statement by statement."""
-    sql = sql_path.read_text(encoding="utf-8")
+    lines = sql_path.read_text(encoding="utf-8").splitlines()
+    sql = "\n".join(
+        line for line in lines if not line.strip().startswith("--")
+    )
     for chunk in sql.split(";"):
         statement = chunk.strip()
-        if statement and not statement.startswith("--"):
+        if statement:
             cur.execute(statement)
 
 
