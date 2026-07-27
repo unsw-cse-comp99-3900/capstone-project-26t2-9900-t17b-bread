@@ -1,0 +1,14 @@
+{
+  "id": "url-us-iran-strikes",
+  "label": "URL",
+  "shortLabel": "US-Iran strikes",
+  "description": "Fox News and Al Jazeera coverage of US-Iran conflict escalation",
+  "kind": "url",
+  "focus": "political",
+  "articleA": {
+    "url": "https://www.foxnews.com/live-news/us-iran-war-irgc-soldiers-death-retaliatory-strikes-jordan-july-19"
+  },
+  "articleB": {
+    "url": "https://www.aljazeera.com/news/2026/7/20/us-bombs-iran-for-ninth-consecutive-night-as-hormuz-tensions-escalate"
+  }
+}

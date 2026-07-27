@@ -1,222 +1,28 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  articleInputModes,
+  comparisonHistoryKey,
+  demoIndexPath,
+  focusOptions,
+  friendlyErrorMessages,
+  maxHistoryItems,
+  maxUploadSizeBytes,
+  minTextChars,
+  relationshipOptions,
+} from './config/appConfig'
+import {
+  copyTextToClipboard,
+  createFileFromDemoAsset,
+  downloadJsonFile,
+  getDownloadFilename,
+  isAllowedUpload,
+  isPdfFile,
+  isValidHttpUrl,
+  isValidText,
+  isValidUpload,
+  readTextDemoAsset,
+} from './utils/appHelpers'
 import './App.css'
-
-const focusOptions = [
-  { value: 'general', label: 'General comparison' },
-  { value: 'political', label: 'Political framing' },
-  { value: 'sentiment', label: 'Sentiment' },
-  { value: 'economic', label: 'Economic focus' },
-  { value: 'social', label: 'Social impact' },
-]
-
-const relationshipOptions = [
-  { value: 'aligned', label: 'Aligned' },
-  { value: 'partially_aligned', label: 'Partially aligned' },
-  { value: 'divergent', label: 'Divergent' },
-]
-
-const articleInputModes = [
-  { value: 'url', label: 'URL' },
-  { value: 'text', label: 'Paste text' },
-  { value: 'upload', label: 'PDF / Word' },
-]
-
-const maxUploadSizeBytes = 10 * 1024 * 1024
-const minTextChars = 20
-
-const demoIndexPath = '/demo-files/index.json'
-const comparisonHistoryKey = 'narrative-diff-history'
-const maxHistoryItems = 10
-
-const friendlyErrorMessages = {
-  url_missing: {
-    title: 'Missing article link',
-    message: 'Please paste a complete article URL before comparing.',
-    action: 'Use a link that starts with http:// or https://.',
-  },
-  url_invalid_scheme: {
-    title: 'Link format is not supported',
-    message: 'The article link needs to be a normal web link.',
-    action: 'Check that it starts with http:// or https://.',
-  },
-  url_missing_host: {
-    title: 'Incomplete article link',
-    message: 'This link is missing the website name.',
-    action: 'Paste the full article URL from your browser address bar.',
-  },
-  fetch_timeout: {
-    title: 'The website took too long to respond',
-    message: 'The article site may be slow or temporarily unavailable.',
-    action: 'Try again later, or use a different article link.',
-  },
-  fetch_connection_failed: {
-    title: 'Could not connect to the website',
-    message: 'The link may be wrong, blocked, or unavailable from this server.',
-    action: 'Open the link in your browser to check it, then try again.',
-  },
-  fetch_http_401: {
-    title: 'This article requires sign-in',
-    message: 'The news site did not allow access without an account.',
-    action: 'Use a public article link, or upload a saved PDF/Word copy when file upload is available.',
-  },
-  fetch_http_403: {
-    title: 'The website blocked access',
-    message: 'Some news sites block automated article fetching.',
-    action: 'Try another source, or upload a saved PDF/Word copy when file upload is available.',
-  },
-  fetch_http_404: {
-    title: 'Article page was not found',
-    message: 'The URL may be old, mistyped, or no longer available.',
-    action: 'Check the link and paste the article URL again.',
-  },
-  fetch_http_error: {
-    title: 'The website returned an error',
-    message: 'The article page could not be downloaded from the news site.',
-    action: 'Try again later or use another article link.',
-  },
-  fetch_page_too_large: {
-    title: 'The page is too large to process',
-    message: 'This link may point to a feed, homepage, or very large page instead of one article.',
-    action: 'Use the direct URL for a single news article.',
-  },
-  extraction_paywall: {
-    title: 'This article may be behind a paywall',
-    message: 'The news site appears to require a subscription or membership to read the full article.',
-    action: 'Use a publicly accessible article, or upload a saved PDF/Word copy when file upload is available.',
-  },
-  extraction_login_required: {
-    title: 'This article requires login',
-    message: 'The article text is not visible until a reader signs in.',
-    action: 'Sign in on the news site and save the article as PDF/Word, or use another public link.',
-  },
-  extraction_not_news_page: {
-    title: 'This does not look like a news article',
-    message: 'The page may be a homepage, live feed, topic page, or search result.',
-    action: 'Paste the URL for a specific article page.',
-  },
-  extraction_js_rendered: {
-    title: 'The article text could not be read',
-    message: 'This site loads the story in a way the backend cannot extract automatically.',
-    action: 'Try another source, or upload a saved PDF/Word copy when file upload is available.',
-  },
-  extraction_empty: {
-    title: 'No readable article text found',
-    message: 'The backend reached the page, but could not find enough article content.',
-    action: 'Check that the link opens a full article, not a video page or listing page.',
-  },
-  upload_unsupported_type: {
-    title: 'File type is not supported',
-    message: 'Only PDF and Word documents can be processed.',
-    action: 'Upload a .pdf or .docx file.',
-  },
-  upload_file_too_large: {
-    title: 'File is too large',
-    message: 'The uploaded document is bigger than the current limit.',
-    action: 'Use a file under 10MB.',
-  },
-  upload_parse_failed: {
-    title: 'File could not be read',
-    message: 'The document may be corrupted, password-protected, or not text-based.',
-    action: 'Try exporting the article again as PDF or Word.',
-  },
-  upload_empty_document: {
-    title: 'No readable text found in the file',
-    message: 'The uploaded document does not contain enough extractable article text.',
-    action: 'Check the file contents and upload a readable copy.',
-  },
-  text_empty: {
-    title: 'No text was pasted',
-    message: 'The article text box is empty.',
-    action: 'Paste the article content into the text box before comparing.',
-  },
-  text_too_short: {
-    title: 'Pasted text is too short',
-    message: 'There is not enough text to analyse this article.',
-    action: 'Paste the full article body, not just the headline.',
-  },
-  ocr_unavailable: {
-    title: 'Scanned PDF reading is unavailable',
-    message: 'The server cannot run OCR right now, so this scanned PDF cannot be read.',
-    action: 'Upload a text-based PDF/Word file, or paste the article text instead.',
-  },
-  ocr_failed: {
-    title: 'Scanned PDF could not be read',
-    message: 'OCR was unable to recognise text in this scanned document.',
-    action: 'Try a clearer scan, a text-based PDF, or paste the article text.',
-  },
-  ocr_no_text_found: {
-    title: 'No text found in the scanned PDF',
-    message: 'OCR completed but did not find readable article text.',
-    action: 'Check that the PDF contains article pages, then try again.',
-  },
-  pdf_not_image_based: {
-    title: 'This PDF already has selectable text',
-    message: 'This looks like a text PDF, so OCR conversion was not needed.',
-    action: 'Use it directly for comparison, or download it as Word if you like.',
-  },
-}
-
-function isValidHttpUrl(value) {
-  try {
-    const url = new URL(value.trim())
-    return url.protocol === 'http:' || url.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
-function isAllowedUpload(file) {
-  if (!file) {
-    return false
-  }
-
-  const fileName = file.name.toLowerCase()
-  return fileName.endsWith('.pdf') || fileName.endsWith('.docx')
-}
-
-function isValidUpload(file) {
-  return Boolean(file) && isAllowedUpload(file) && file.size <= maxUploadSizeBytes
-}
-
-function isValidText(text) {
-  return typeof text === 'string' && text.trim().length >= minTextChars
-}
-
-function isPdfFile(file) {
-  return Boolean(file) && file.name.toLowerCase().endsWith('.pdf')
-}
-
-function getDownloadFilename(contentDisposition, fallback) {
-  if (!contentDisposition) {
-    return fallback
-  }
-
-  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
-  if (utf8Match) {
-    try {
-      return decodeURIComponent(utf8Match[1])
-    } catch {
-      return fallback
-    }
-  }
-
-  const plainMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
-  return plainMatch ? plainMatch[1] : fallback
-}
-
-function downloadJsonFile(payload, filename) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: 'application/json',
-  })
-  const objectUrl = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = objectUrl
-  anchor.download = filename
-  document.body.append(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(objectUrl)
-}
 
 function loadComparisonHistory() {
   try {
@@ -289,44 +95,6 @@ function buildComparisonSummary({
   }
 
   return lines.join('\n')
-}
-
-async function copyTextToClipboard(text) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.append(textarea)
-  textarea.select()
-  document.execCommand('copy')
-  textarea.remove()
-}
-
-async function createFileFromDemoAsset({ filePath, fileName, mimeType }) {
-  const response = await fetch(filePath)
-
-  if (!response.ok) {
-    throw new Error(`Could not load ${fileName}.`)
-  }
-
-  const blob = await response.blob()
-  return new File([blob], fileName, { type: mimeType })
-}
-
-async function readTextDemoAsset({ filePath }) {
-  const response = await fetch(filePath)
-
-  if (!response.ok) {
-    throw new Error(`Could not load ${filePath}.`)
-  }
-
-  return response.text()
 }
 
 function getUrlHost(value) {
@@ -428,6 +196,62 @@ function getMatchCounts(matches) {
     }),
     {},
   )
+}
+
+function getAverageMatchScore(matches) {
+  const scores = matches
+    .map((match) => Number(match.score))
+    .filter((score) => Number.isFinite(score))
+
+  if (scores.length === 0) {
+    return null
+  }
+
+  return scores.reduce((total, score) => total + score, 0) / scores.length
+}
+
+function getDominantRelationship(counts) {
+  return relationshipOptions.reduce(
+    (dominant, option) =>
+      counts[option.value] > counts[dominant.value] ? option : dominant,
+    relationshipOptions[0],
+  )
+}
+
+function buildReadableComparisonSummary(matches, backendSummary) {
+  if (typeof backendSummary?.statement === 'string' && backendSummary.statement) {
+    return backendSummary.statement
+  }
+
+  if (typeof backendSummary?.text === 'string' && backendSummary.text) {
+    return backendSummary.text
+  }
+
+  if (typeof backendSummary?.description === 'string' && backendSummary.description) {
+    return backendSummary.description
+  }
+
+  if (matches.length === 0) {
+    return 'No matched paragraph evidence is available yet. Run a comparison to generate a high-level summary.'
+  }
+
+  const counts = getMatchCounts(matches)
+  const dominant = getDominantRelationship(counts)
+  const dominantLabel = dominant.label.toLowerCase()
+  const remaining = relationshipOptions
+    .filter((option) => option.value !== dominant.value && counts[option.value] > 0)
+    .map((option) => `${counts[option.value]} ${option.label.toLowerCase()}`)
+    .join(' and ')
+
+  if (!remaining) {
+    return `${matches.length} paragraph pair${
+      matches.length === 1 ? '' : 's'
+    } found. The visible evidence is mostly ${dominantLabel}.`
+  }
+
+  return `${matches.length} paragraph pair${
+    matches.length === 1 ? '' : 's'
+  } found. The visible evidence is mostly ${dominantLabel}, with ${remaining} also shown.`
 }
 
 function getFriendlyError(error) {
@@ -1105,6 +929,44 @@ function ComparisonControls({
   )
 }
 
+function ComparisonSummaryCard({ matches, backendSummary }) {
+  if (matches.length === 0 && !backendSummary) {
+    return null
+  }
+
+  const counts = getMatchCounts(matches)
+  const averageScore = getAverageMatchScore(matches)
+  const summaryText = buildReadableComparisonSummary(matches, backendSummary)
+  const stats = [
+    { label: 'Matched pairs', value: matches.length },
+    { label: 'Aligned', value: counts.aligned },
+    { label: 'Partially aligned', value: counts.partially_aligned },
+    { label: 'Divergent', value: counts.divergent },
+    {
+      label: 'Average score',
+      value: averageScore == null ? 'N/A' : `${Math.round(averageScore * 100)}%`,
+    },
+  ]
+
+  return (
+    <section className="comparison-summary" aria-label="Comparison summary">
+      <div>
+        <p className="eyebrow">High-level summary</p>
+        <h3>Article difference overview</h3>
+        <p>{summaryText}</p>
+      </div>
+      <dl>
+        {stats.map((item) => (
+          <div key={item.label}>
+            <dt>{item.label}</dt>
+            <dd>{item.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  )
+}
+
 function MatchExplanationPanel({
   selectedMatch,
   matches,
@@ -1278,9 +1140,14 @@ function App() {
   const [demoLoadError, setDemoLoadError] = useState('')
   const [historyItems, setHistoryItems] = useState(loadComparisonHistory)
   const [isHistoryOpen, setIsHistoryOpen] = useState(false)
+  const [isAboutOpen, setIsAboutOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [showBackToTop, setShowBackToTop] = useState(false)
+  const [backendStatus, setBackendStatus] = useState('offline')
   const inputSectionRef = useRef(null)
   const resultsSectionRef = useRef(null)
+  const backendFailureCountRef = useRef(0)
+  const isLoadingRef = useRef(false)
   function isSideReady(mode, url, text, file) {
     if (mode === 'url') {
       return isValidHttpUrl(url)
@@ -1294,6 +1161,10 @@ function App() {
   const canCompare =
     isSideReady(articleAMode, articleAUrl, articleAText, articleAFile) &&
     isSideReady(articleBMode, articleBUrl, articleBText, articleBFile)
+
+  useEffect(() => {
+    isLoadingRef.current = isLoading
+  }, [isLoading])
 
   useEffect(() => {
     let isActive = true
@@ -1335,6 +1206,62 @@ function App() {
 
     return () => {
       isActive = false
+    }
+  }, [])
+
+  useEffect(() => {
+    function handleWindowScroll() {
+      setShowBackToTop(window.scrollY > 520)
+    }
+
+    handleWindowScroll()
+    window.addEventListener('scroll', handleWindowScroll, { passive: true })
+
+    return () => window.removeEventListener('scroll', handleWindowScroll)
+  }, [])
+
+  useEffect(() => {
+    let isActive = true
+    let timeoutId
+
+    async function checkBackendStatus() {
+      const controller = new AbortController()
+      timeoutId = window.setTimeout(() => controller.abort(), 3500)
+
+      try {
+        const response = await fetch('/health', {
+          cache: 'no-store',
+          signal: controller.signal,
+        })
+
+        if (isActive && response.ok) {
+          backendFailureCountRef.current = 0
+          setBackendStatus('online')
+        } else if (isActive) {
+          backendFailureCountRef.current += 1
+          if (backendFailureCountRef.current >= 3 && !isLoadingRef.current) {
+            setBackendStatus('offline')
+          }
+        }
+      } catch {
+        if (isActive) {
+          backendFailureCountRef.current += 1
+          if (backendFailureCountRef.current >= 3 && !isLoadingRef.current) {
+            setBackendStatus('offline')
+          }
+        }
+      } finally {
+        window.clearTimeout(timeoutId)
+      }
+    }
+
+    checkBackendStatus()
+    const intervalId = window.setInterval(checkBackendStatus, 30000)
+
+    return () => {
+      isActive = false
+      window.clearTimeout(timeoutId)
+      window.clearInterval(intervalId)
     }
   }, [])
 
@@ -1775,6 +1702,10 @@ function App() {
       } else {
         setStatusMessage('These articles could not be processed.')
       }
+
+      if (returnedArticles.length > 0) {
+        window.requestAnimationFrame(scrollToResults)
+      }
     } catch (error) {
       setArticles([])
       setComparison(null)
@@ -1866,6 +1797,10 @@ function App() {
     inputSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   function scrollToResults() {
     resultsSectionRef.current?.scrollIntoView({
       behavior: 'smooth',
@@ -1930,9 +1865,68 @@ function App() {
             History
             {historyItems.length > 0 && <span>{historyItems.length}</span>}
           </button>
-          <span className="sprint-label">Sprint 2 prototype</span>
+          <button
+            className="header-pill-button"
+            type="button"
+            onClick={() => setIsAboutOpen(true)}
+          >
+            About
+          </button>
+          <span className="sprint-label">Sprint 3 prototype</span>
         </div>
       </header>
+
+      <span
+        className={`backend-status backend-status--${backendStatus}`}
+        aria-label={`Backend ${backendStatus}`}
+        title={`Backend ${backendStatus}`}
+      />
+
+      {isAboutOpen && (
+        <div
+          className="about-modal-backdrop"
+          role="presentation"
+          onMouseDown={() => setIsAboutOpen(false)}
+        >
+          <section
+            className="about-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="about-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="about-modal__header">
+              <div>
+                <p className="eyebrow">About</p>
+                <h2 id="about-title">Narrative Diff</h2>
+              </div>
+              <button
+                className="about-modal__close"
+                type="button"
+                onClick={() => setIsAboutOpen(false)}
+                aria-label="Close about dialog"
+              >
+                x
+              </button>
+            </div>
+            <p>
+              Narrative Diff compares two reports on the same event and shows
+              where their paragraph-level evidence aligns, partially aligns, or
+              diverges.
+            </p>
+            <p>
+              You can enter article URLs, paste text directly, or upload
+              supported documents. The highlighted results include matched
+              paragraph pairs, relationship labels, confidence scores, and
+              explanations from the backend comparison pipeline.
+            </p>
+            <p>
+              Saved results are stored in this browser for quick review during
+              testing and demos.
+            </p>
+          </section>
+        </div>
+      )}
 
       <main>
         <HistoryPanel
@@ -1959,7 +1953,9 @@ function App() {
             <div className="demo-buttons" aria-label="Demo input examples">
               {demoSamples.length > 0 ? (
                 <>
-                  {demoGroups.map((group) => (
+                  {demoGroups
+                    .filter((group) => group.samples.length > 0)
+                    .map((group) => (
                     <label className="demo-select-label" key={group.label}>
                       {group.label}
                       <select
@@ -2088,15 +2084,6 @@ function App() {
               </div>
             )}
 
-            {articles.length > 0 && (
-              <button
-                className="jump-button"
-                type="button"
-                onClick={scrollToResults}
-              >
-                Jump to results
-              </button>
-            )}
           </form>
         </section>
 
@@ -2132,16 +2119,14 @@ function App() {
                 >
                   Copy summary
                 </button>
-                <button
-                  className="save-results-button"
-                  type="button"
-                  onClick={scrollToInput}
-                >
-                  Back to input
-                </button>
               </div>
             </div>
           </div>
+
+          <ComparisonSummaryCard
+            matches={comparisonMatches}
+            backendSummary={comparison?.summary}
+          />
 
           <ComparisonControls
             matches={comparisonMatches}
@@ -2237,6 +2222,18 @@ function App() {
         <p>T17B BREAD / News narrative comparison</p>
         <p>Highlighted evidence with explanations and filters.</p>
       </footer>
+
+      {showBackToTop && (
+        <button
+          className="back-to-top-button"
+          type="button"
+          onClick={scrollToTop}
+          aria-label="Back to top"
+          title="Back to top"
+        >
+          <span aria-hidden="true">↑</span>
+        </button>
+      )}
     </div>
   )
 }

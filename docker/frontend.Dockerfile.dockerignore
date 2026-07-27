@@ -1,0 +1,11 @@
+*
+
+!frontend/
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/public/
+!frontend/src/
+!frontend/vite.config.js
+!docker/
+!docker/frontend.nginx.conf.template
