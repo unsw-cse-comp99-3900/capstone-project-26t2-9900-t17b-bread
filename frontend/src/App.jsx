@@ -1872,7 +1872,7 @@ function App() {
           >
             About
           </button>
-          <span className="sprint-label">Sprint 2 prototype</span>
+          <span className="sprint-label">Sprint 3 prototype</span>
         </div>
       </header>
 
@@ -2118,13 +2118,6 @@ function App() {
                   disabled={!comparisonMatches.length}
                 >
                   Copy summary
-                </button>
-                <button
-                  className="save-results-button"
-                  type="button"
-                  onClick={scrollToInput}
-                >
-                  Back to input
                 </button>
               </div>
             </div>
