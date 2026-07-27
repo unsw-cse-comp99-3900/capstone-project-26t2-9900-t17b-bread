@@ -1,7 +1,9 @@
 # Sprint 2 ML dependencies for the comparison pipeline.
 # Install with:  pip install -r requirements-ml.txt
 # (These are heavy because of torch; not needed for Sprint 1.)
-sentence-transformers==3.3.1
+# Kept in sync with the sentence-transformers pin in requirements.txt — see
+# the comment there for why 3.3.1 was replaced (meta tensor load crash).
+sentence-transformers==5.6.0
 rank-bm25==0.2.2
 scikit-learn==1.6.0
 numpy==2.2.1

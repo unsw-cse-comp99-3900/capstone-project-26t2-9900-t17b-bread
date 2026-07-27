@@ -14,7 +14,15 @@ python-multipart==0.0.20
 pymupdf==1.24.14
 pytesseract==0.3.13
 pillow==11.0.0
-sentence-transformers
+
+# Sprint 2 comparison pipeline (SBERT embeddings, BM25 retrieval). These are
+# real runtime dependencies of app/services/embedding_service.py and
+# app/services/bm25_similarity_service.py, not reserved for later.
+# Pinned: unpinned sentence-transformers previously resolved to 3.3.1, which
+# crashes on model load on some torch/transformers combinations with
+# "Cannot copy out of meta tensor; no data!". 5.6.0 is verified working.
+sentence-transformers==5.6.0
+rank-bm25==0.2.2
 
 # Database (PostgreSQL via async SQLAlchemy). psycopg is only loaded when a
 # DATABASE_URL is configured, so the backend still runs without a database.
@@ -24,10 +32,3 @@ psycopg[binary]==3.2.3
 # Dev / testing
 pytest==8.3.4
 pytest-asyncio==0.25.2
-
-# NOTE: Sprint 2 ML dependencies (SBERT embeddings, BM25 retrieval) are kept
-
-rank-bm25
-
-# in requirements-ml.txt so the Sprint 1 backend stays lightweight and avoids
-# pulling in torch until the comparison pipeline is implemented.

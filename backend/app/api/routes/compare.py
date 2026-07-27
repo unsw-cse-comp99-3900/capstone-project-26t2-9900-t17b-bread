@@ -4,6 +4,26 @@ from __future__ import annotations
 
 import asyncio
 import logging
+
+import os
+import json
+import uuid
+
+from app.db import dal
+from app.db.base import _normalize_url
+from sqlalchemy import create_engine, text
+from dotenv import load_dotenv
+
+load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    DATABASE_URL = os.getenv(
+        "SQLALCHEMY_DATABASE_URL",
+        "postgresql://postgres:postgres@localhost:5432/postgres"
+    )
+
+engine = create_engine(_normalize_url(DATABASE_URL))
+
 from typing import Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -378,12 +398,88 @@ async def _run_compare_inputs(
         focus=focus,
         progress=progress,
     )
+    
+    session_token = str(uuid.uuid4())
+
+    frontend_matches = _build_frontend_matches(pair_result)
+    scores = [m.get("score", 0.0) for m in frontend_matches]
+    similarity_score = sum(scores) / len(scores) if scores else 0.0
+
+    try:
+        with engine.begin() as conn:
+            article_db_ids = {}
+            for res in pair_result.articles:
+                if res.article is None:
+                    continue
+
+                art = res.article
+                title = art.get("title") if isinstance(art, dict) else getattr(art, "title", None)
+                url = art.get("url", res.url) if isinstance(art, dict) else getattr(art, "url", res.url)
+                source_domain = art.get("source_domain") if isinstance(art, dict) else getattr(art, "source_domain", None)
+
+                paragraphs = art.get("paragraphs", []) if isinstance(art, dict) else getattr(art, "paragraphs", [])
+                main_body = "\n\n".join(paragraphs) if paragraphs else "No content available."
+
+                tgt_url = url or f"pasted_text_{res.article_ref.lower()}_{session_token[:8]}"
+                tgt_title = title or f"Pasted Article {res.article_ref}"
+                tgt_domain = source_domain or "local.pasted"
+
+                current_art_id = dal.insert_article(conn, tgt_url, tgt_title, tgt_domain, main_body)
+                article_db_ids[res.article_ref] = current_art_id
+
+                chunks = res.paragraph_chunks or []
+                embeddings_by_chunk_id = {
+                    item.get("chunk_id"): item
+                    for item in (res.chunk_embeddings or [])
+                }
+
+                for idx, chunk in enumerate(chunks):
+                    chunk_text = chunk.get("text", "") if isinstance(chunk, dict) else getattr(chunk, "text", "")
+                    if not chunk_text:
+                        continue
+
+                    chunk_id = dal.insert_chunk(conn, current_art_id, idx, chunk_text)
+
+                    chunk_key = chunk.get("chunk_id") if isinstance(chunk, dict) else getattr(chunk, "chunk_id", None)
+                    embedding_item = embeddings_by_chunk_id.get(chunk_key)
+
+                    if chunk_id and embedding_item:
+                        vector = embedding_item.get("embedding")
+                        if vector:
+                            dal.insert_embedding(
+                                conn,
+                                chunk_id,
+                                vector,
+                                embedding_item.get("model_name"),
+                            )
+
+            db_id_a = article_db_ids.get("A")
+            db_id_b = article_db_ids.get("B")
+
+            if db_id_a and db_id_b:
+                result_payload = {
+                    "matches": frontend_matches,
+                    "similarity_score": round(similarity_score, 2),
+                    "session_token": session_token
+                }
+                
+                comparison_id = dal.insert_comparison_result(conn, db_id_a, db_id_b, result_payload)
+                
+                if comparison_id:
+                    dal.insert_history(conn, comparison_id)
+                    logger.info(f"[DB Sync] Automatically logged history for comparison ID: {comparison_id}")
+                
+        logger.info("[DB Sync Success] Sprint 2 pipeline alignment successfully coordinated.")
+        
+    except Exception as db_err:
+        logger.critical(f"[CRITICAL DB ERROR]: {db_err}")
+        session_token = f"fallback-{uuid.uuid4()}"
 
     return _build_compare_response(
         focus=focus,
         pair_result=pair_result,
         progress=progress,
-        session_token=None,
+        session_token=session_token,
     )
 
 
