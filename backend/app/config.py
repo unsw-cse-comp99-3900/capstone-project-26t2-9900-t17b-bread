@@ -19,6 +19,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Logging & debug
+    log_level: str = "INFO"
+    log_format: str = "human"  # "human" or "json"
+    debug_enabled: bool = False
+
     # CORS
     cors_origins: str = "http://localhost:3000,http://localhost:5173"
 

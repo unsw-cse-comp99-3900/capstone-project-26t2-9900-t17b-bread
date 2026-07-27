@@ -15,12 +15,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api.routes import compare, fetch, upload
+from app.api.routes import debug as debug_routes
 from app.config import get_settings
 from app.db.base import dispose_engine, is_db_enabled, ping_db
-
-logger = logging.getLogger(__name__)
+from app.logging_config import setup_logging
+from app.middleware.request_logging import RequestLoggingMiddleware
 
 settings = get_settings()
+
+setup_logging(log_level=settings.log_level, log_format=settings.log_format)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -51,6 +55,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -62,6 +67,7 @@ app.add_middleware(
 app.include_router(fetch.router)
 app.include_router(compare.router)
 app.include_router(upload.router)
+app.include_router(debug_routes.router)
 
 
 @app.get("/health", tags=["meta"], summary="Health check")

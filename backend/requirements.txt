@@ -29,6 +29,11 @@ rank-bm25==0.2.2
 sqlalchemy[asyncio]==2.0.36
 psycopg[binary]==3.2.3
 
-# Dev / testing
+# Dev / testing / CI
 pytest==8.3.4
 pytest-asyncio==0.25.2
+pytest-cov==6.1.1
+ruff==0.11.12
+bandit[toml]==1.8.3
+mypy==1.15.0
+pip-audit==2.9.0
