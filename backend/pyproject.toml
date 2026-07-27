@@ -1,0 +1,75 @@
+[project]
+name = "narrative-diff-backend"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+# ─── Ruff (linter + formatter) ────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (import ordering)
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "A",    # flake8-builtins shadowing
+    "S",    # flake8-bandit (security)
+    "T20",  # flake8-print (no print statements)
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "S101",   # assert is fine in tests
+    "S104",   # binding to all interfaces (fine in dev server)
+    "S110",   # try-except-pass (acceptable in best-effort paths)
+    "B008",   # function call in default arg (FastAPI Depends)
+    "RUF012", # mutable class variable (pydantic models)
+    "A003",   # class attribute shadowing builtin (id, type)
+    "E501",   # line length handled by formatter
+    "E402",   # module-import-not-at-top (some files have setup before imports)
+    "F811",   # redefined-while-unused (re-exports in __init__)
+    "T201",   # print (used in scripts)
+    "RUF001", # ambiguous unicode (Chinese comments)
+    "RUF003", # ambiguous unicode in comments
+    "W291",   # trailing whitespace (auto-fixable)
+    "W292",   # missing newline at end of file (auto-fixable)
+    "W293",   # blank line with whitespace (auto-fixable)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "T20"]
+"app/api/routes/debug.py" = ["T20"]
+"app/api/routes/compare.py" = ["E402", "F841", "T20"]
+"scripts/**" = ["T20"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+# ─── Bandit (security scanner) ────────────────────────────────────────────────
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "venv"]
+skips = [
+    "B101",  # assert_used (fine in non-production paths)
+    "B104",  # hardcoded_bind_all_interfaces
+]
+
+# ─── Mypy (type checker) ──────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+no_strict_optional = true
+warn_unused_configs = true
+warn_redundant_casts = true
+
+# ─── pytest ───────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

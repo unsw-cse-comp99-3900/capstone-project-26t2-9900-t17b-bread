@@ -8,11 +8,15 @@ The app accepts two article sources, sends them to the FastAPI backend, and disp
 
 | Path | Description |
 |------|-------------|
-| `backend/` | FastAPI backend and NLP comparison pipeline |
+| `backend/` | FastAPI backend for ingestion, upload parsing, OCR, NLP comparison, logging, and API responses |
+| `backend/APIenglish.md` | Backend API reference |
+| `backend/DATABASE_INTEGRATION.md` | Database integration guide |
 | `frontend/` | React + Vite frontend |
 | `frontend/public/demo-files/` | Demo input pairs |
-| `database/` | PostgreSQL schema |
+| `database/` | PostgreSQL schema and database notes |
 | `docker/` | Full-stack Docker setup |
+| `.github/workflows/backend-ci.yml` | Backend quality workflow |
+| `.github/workflows/full-stack-quality.yml` | Frontend and Docker build workflow |
 
 ## Backend
 
@@ -27,6 +31,15 @@ uvicorn app.main:app --reload
 - API: <http://localhost:8000>
 - Swagger docs: <http://localhost:8000/docs>
 - Health check: <http://localhost:8000/health>
+- Database health: <http://localhost:8000/health/db>
+
+The backend supports URL articles, pasted text, PDF/Word uploads, OCR for scanned PDFs, paragraph-level comparison, relationship labels, explanations, summaries, and optional PostgreSQL persistence.
+
+Debug routes are available in debug mode:
+
+- `/debug/info`
+- `/debug/logs`
+- `/debug/health/detailed`
 
 ## Frontend
 
@@ -42,7 +55,7 @@ Open:
 http://localhost:5173
 ```
 
-Frontend details and test notes are in `frontend/README.md`.
+Frontend details, demo input notes, and test coverage are in `frontend/README.md`.
 
 ## Docker
 
@@ -74,4 +87,12 @@ npm run lint
 npm run build
 ```
 
-GitHub Actions runs `.github/workflows/full-stack-quality.yml` for frontend tests/lint/build, backend pytest with PostgreSQL, database schema setup, and Docker Compose config/build.
+Backend checks:
+
+```powershell
+cd backend
+python scripts/check_db.py --init
+python -m pytest tests/ -v
+```
+
+GitHub Actions currently covers frontend tests/lint/build, Docker Compose config/build, and the backend quality workflow from `main`.
