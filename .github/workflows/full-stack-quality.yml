@@ -67,9 +67,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
-    env:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/postgres
-
     defaults:
       run:
         working-directory: backend
@@ -94,6 +91,8 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Initialise and verify database schema
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/postgres
         run: python scripts/check_db.py --init
 
       - name: Run backend tests
