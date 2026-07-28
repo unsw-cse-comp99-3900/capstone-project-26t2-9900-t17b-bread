@@ -76,6 +76,20 @@ footer {
   cursor: pointer;
 }
 
+.user-pill {
+  max-width: 180px;
+  overflow: hidden;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .history-button:hover,
 .header-pill-button:hover {
   background: #fff;
@@ -167,6 +181,103 @@ footer {
 
 .about-modal__close:hover {
   background: #f8f7f3;
+}
+
+.auth-modal {
+  width: min(420px, 100%);
+  padding: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 24px 70px rgba(27, 40, 61, 0.2);
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-form label {
+  display: grid;
+  gap: 7px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.auth-form input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+  font-size: 14px;
+}
+
+.auth-error {
+  margin: 0;
+  color: #bd4747;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.auth-submit {
+  width: 100%;
+  justify-content: center;
+  min-height: 46px;
+}
+
+.auth-switch {
+  width: 100%;
+  margin-top: 14px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.auth-switch:hover {
+  color: var(--ink);
+}
+
+.save-modal {
+  width: min(480px, 100%);
+  padding: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 24px 70px rgba(27, 40, 61, 0.2);
+}
+
+.save-modal__copy {
+  margin: 0 0 18px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.save-modal__actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.save-modal__actions .compare-button {
+  justify-content: center;
+  min-height: 46px;
+}
+
+.save-modal__actions .header-pill-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .history-panel {

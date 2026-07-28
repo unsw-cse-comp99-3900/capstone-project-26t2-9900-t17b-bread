@@ -5,3 +5,6 @@
 !backend/app/
 !backend/scripts/
 !backend/pytest.ini
+!database/
+!database/database/
+!database/database/init_db.sql

@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
 COPY backend/scripts ./scripts
 COPY backend/pytest.ini ./
+COPY database/database/init_db.sql /database/database/init_db.sql
 
 EXPOSE 8000
 

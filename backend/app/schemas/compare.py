@@ -212,6 +212,14 @@ class CompareResponse(BaseModel):
         ),
     )
 
+    comparison_id: int | None = Field(
+        default=None,
+        description=(
+            "Database identifier for the persisted comparison result. "
+            "Null when persistence is disabled or unavailable."
+        ),
+    )
+
 
 # ---------------------------------------------------------------------
 # Legacy Sprint 2 schemas

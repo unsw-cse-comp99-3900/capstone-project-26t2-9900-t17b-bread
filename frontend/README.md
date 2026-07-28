@@ -2,7 +2,7 @@
 
 React + Vite frontend for the Narrative Diff news comparison tool.
 
-The frontend compares two article sources and displays paragraph-level matches, labels, filters, evidence details, history, and export controls.
+The frontend compares two article sources and displays paragraph-level matches, labels, filters, evidence details, account history, and export controls.
 
 ## Requirements
 
@@ -59,7 +59,9 @@ src/
 - Streaming compare progress
 - Friendly validation and backend error messages
 - Paragraph-level highlights and evidence panel
-- Relationship filters, summary, browser history, JSON export, and copy summary
+- Basic login/register dialog
+- Account history backed by the database, with browser history fallback when logged out
+- Relationship filters, summary, HTML report export, and copy summary
 - Desktop side-by-side layout and mobile Article A/B tabs
 
 ## Demo Inputs
@@ -96,9 +98,9 @@ Current coverage:
 - About dialog
 - Demo pair loading
 - Mocked comparison result display and paragraph highlights
-- Evidence panel, relationship filters, copy summary, and JSON export
+- Evidence panel, relationship filters, copy summary, and HTML report export
 - Mobile Article A/B tab state
-- Browser history
+- Login dialog and browser-history fallback
 
 ## Continuous Integration
 
@@ -108,11 +110,11 @@ Workflow:
 .github/workflows/full-stack-quality.yml
 ```
 
-It runs frontend tests/lint/build, backend pytest with PostgreSQL, database schema setup, and Docker Compose config/build.
+It runs frontend tests/lint/build and Docker Compose config/build.
 
 ## Manual Test Checklist
 
 - Run one URL, text, and Word demo.
 - Check invalid URL error handling.
-- Confirm progress, auto-scroll, highlights, filters, evidence panel, history, copy, and save.
+- Confirm progress, auto-scroll, highlights, filters, evidence panel, login/history, copy, and save.
 - Check desktop and mobile layouts.

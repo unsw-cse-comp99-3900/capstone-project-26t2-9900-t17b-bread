@@ -33,7 +33,7 @@ uvicorn app.main:app --reload
 - Health check: <http://localhost:8000/health>
 - Database health: <http://localhost:8000/health/db>
 
-The backend supports URL articles, pasted text, PDF/Word uploads, OCR for scanned PDFs, paragraph-level comparison, relationship labels, explanations, summaries, and optional PostgreSQL persistence.
+The backend supports URL articles, pasted text, PDF/Word uploads, OCR for scanned PDFs, paragraph-level comparison, relationship labels, explanations, summaries, account login, and optional PostgreSQL persistence for saved history.
 
 Debug routes are available in debug mode:
 

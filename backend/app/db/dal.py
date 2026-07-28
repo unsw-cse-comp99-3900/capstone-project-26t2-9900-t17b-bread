@@ -3,6 +3,50 @@ from typing import Any, List, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+def create_user(conn: Connection, email: str, password_hash: str, display_name: str | None = None) -> int:
+    query = text("""
+        INSERT INTO public.users (email, password_hash, display_name)
+        VALUES (:email, :password_hash, :display_name)
+        RETURNING id;
+    """)
+    return conn.execute(query, {
+        "email": email,
+        "password_hash": password_hash,
+        "display_name": display_name,
+    }).scalar()
+
+def get_user_by_email(conn: Connection, email: str) -> Optional[Dict[str, Any]]:
+    query = text("SELECT * FROM public.users WHERE email = :email;")
+    row = conn.execute(query, {"email": email}).mappings().first()
+    return dict(row) if row else None
+
+def get_user(conn: Connection, user_id: int) -> Optional[Dict[str, Any]]:
+    query = text("SELECT id, email, display_name, created_at FROM public.users WHERE id = :id;")
+    row = conn.execute(query, {"id": user_id}).mappings().first()
+    return dict(row) if row else None
+
+def insert_auth_token(conn: Connection, user_id: int, token: str) -> int:
+    query = text("""
+        INSERT INTO public.auth_tokens (user_id, token)
+        VALUES (:user_id, :token)
+        RETURNING id;
+    """)
+    return conn.execute(query, {"user_id": user_id, "token": token}).scalar()
+
+def get_user_by_token(conn: Connection, token: str) -> Optional[Dict[str, Any]]:
+    query = text("""
+        SELECT u.id, u.email, u.display_name, u.created_at
+        FROM public.auth_tokens t
+        JOIN public.users u ON u.id = t.user_id
+        WHERE t.token = :token;
+    """)
+    row = conn.execute(query, {"token": token}).mappings().first()
+    return dict(row) if row else None
+
+def delete_auth_token(conn: Connection, token: str) -> None:
+    query = text("DELETE FROM public.auth_tokens WHERE token = :token;")
+    conn.execute(query, {"token": token})
+
 def insert_article(conn: Connection, url: str, title: str, source_domain: str, main_body: str) -> int:
     query = text("""
         INSERT INTO public.articles (url, title, source_domain, main_body)
@@ -81,34 +125,48 @@ def get_comparison_result(conn: Connection, comparison_id: int) -> Optional[Dict
     row = conn.execute(query, {"id": comparison_id}).mappings().first()
     return dict(row) if row else None
 
-def insert_history_entry(conn: Connection, comparison_id: int) -> int:
+def insert_history_entry(conn: Connection, comparison_id: int, user_id: int | None = None) -> int:
     query = text("""
-        INSERT INTO public.history (comparison_id)
-        VALUES (:comparison_id)
+        INSERT INTO public.history (comparison_id, user_id)
+        VALUES (:comparison_id, :user_id)
+        ON CONFLICT (user_id, comparison_id) DO UPDATE SET saved_at = CURRENT_TIMESTAMP
         RETURNING id;
     """)
-    return conn.execute(query, {"comparison_id": comparison_id}).scalar()
+    return conn.execute(query, {"comparison_id": comparison_id, "user_id": user_id}).scalar()
 
-def get_history(conn: Connection) -> List[Dict[str, Any]]:
+def get_history(conn: Connection, user_id: int | None = None) -> List[Dict[str, Any]]:
+    where_clause = "WHERE h.user_id = :user_id" if user_id is not None else "WHERE h.user_id IS NULL"
     query = text("""
         SELECT h.id as history_id, h.saved_at, r.* 
         FROM public.history h
         JOIN public.comparison_results r ON h.comparison_id = r.id
+        """ + where_clause + """
         ORDER BY h.saved_at DESC;
     """)
-    return [dict(r) for r in conn.execute(query).mappings().all()]
+    params = {"user_id": user_id} if user_id is not None else {}
+    return [dict(r) for r in conn.execute(query, params).mappings().all()]
 
-def delete_history_item(conn: Connection, history_id: int) -> None:
-    query = text("DELETE FROM public.history WHERE id = :id;")
-    conn.execute(query, {"id": history_id})
+def delete_history_item(conn: Connection, history_id: int, user_id: int | None = None) -> None:
+    if user_id is None:
+        query = text("DELETE FROM public.history WHERE id = :id AND user_id IS NULL;")
+        conn.execute(query, {"id": history_id})
+        return
+    query = text("DELETE FROM public.history WHERE id = :id AND user_id = :user_id;")
+    conn.execute(query, {"id": history_id, "user_id": user_id})
 
-def clear_history(conn: Connection) -> None:
-    query = text("TRUNCATE TABLE public.history RESTART IDENTITY CASCADE;")
-    conn.execute(query)
+def clear_history(conn: Connection, user_id: int | None = None) -> None:
+    if user_id is None:
+        query = text("DELETE FROM public.history WHERE user_id IS NULL;")
+        conn.execute(query)
+        return
+    query = text("DELETE FROM public.history WHERE user_id = :user_id;")
+    conn.execute(query, {"user_id": user_id})
 
-def insert_history(conn: Connection, comparison_id: int) -> None:
+def insert_history(conn: Connection, comparison_id: int, user_id: int | None = None) -> int:
     query = text("""
-        INSERT INTO public.history (comparison_id)
-        VALUES (:comparison_id)
+        INSERT INTO public.history (comparison_id, user_id)
+        VALUES (:comparison_id, :user_id)
+        ON CONFLICT (user_id, comparison_id) DO UPDATE SET saved_at = CURRENT_TIMESTAMP
+        RETURNING id;
     """)
-    conn.execute(query, {"comparison_id": comparison_id})
+    return conn.execute(query, {"comparison_id": comparison_id, "user_id": user_id}).scalar()
