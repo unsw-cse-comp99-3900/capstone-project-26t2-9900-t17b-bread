@@ -18,6 +18,8 @@ const routes = {
   demoTextB: '/demo-files/volcano-text/1b.txt',
   compare: '/api/compare/stream',
   compareFiles: '/api/compare/files/stream',
+  authMe: '/api/auth/me',
+  history: '/api/history',
 }
 
 function jsonResponse(data, ok = true) {
@@ -36,9 +38,27 @@ function textResponse(data, ok = true) {
 }
 
 function mockFrontendFetch() {
-  global.fetch = vi.fn((url) => {
+  global.fetch = vi.fn((url, options = {}) => {
     if (url === routes.health) {
       return Promise.resolve(jsonResponse({ status: 'ok' }))
+    }
+
+    if (url === routes.authMe) {
+      return Promise.resolve(
+        jsonResponse({
+          id: 1,
+          email: 'tester@example.com',
+          display_name: 'Tester',
+        }),
+      )
+    }
+
+    if (url === routes.history && options.method === 'POST') {
+      return Promise.resolve(jsonResponse({ item: null }))
+    }
+
+    if (url === routes.history) {
+      return Promise.resolve(jsonResponse({ items: [] }))
     }
 
     if (url === routes.demoIndex) {
@@ -263,7 +283,7 @@ describe('Narrative Diff frontend', () => {
     ).toBeInTheDocument()
   })
 
-  it('downloads the current comparison result as JSON', async () => {
+  it('downloads the current comparison result as an HTML report', async () => {
     const user = await runTextComparison()
     const anchorClick = vi.fn()
     const originalCreateElement = document.createElement.bind(document)
@@ -278,12 +298,56 @@ describe('Narrative Diff frontend', () => {
       return element
     })
 
-    await user.click(screen.getByRole('button', { name: /save results/i }))
+    await user.click(screen.getByRole('button', { name: /save result/i }))
+    await user.click(screen.getByRole('button', { name: /download html report/i }))
 
     expect(URL.createObjectURL).toHaveBeenCalled()
     expect(anchorClick).toHaveBeenCalled()
     expect(
-      screen.getByText(/comparison results saved as a json file/i),
+      screen.getByText(/html report downloaded/i),
+    ).toBeInTheDocument()
+  })
+
+  it('saves logged-in results to account history and downloads HTML', async () => {
+    localStorage.setItem(
+      'narrative-diff-auth',
+      JSON.stringify({
+        accessToken: 'test-token',
+        user: {
+          id: 1,
+          email: 'tester@example.com',
+          display_name: 'Tester',
+        },
+      }),
+    )
+
+    const user = await runTextComparison()
+    const anchorClick = vi.fn()
+    const originalCreateElement = document.createElement.bind(document)
+
+    vi.spyOn(document, 'createElement').mockImplementation((tagName, options) => {
+      const element = originalCreateElement(tagName, options)
+
+      if (tagName.toLowerCase() === 'a') {
+        element.click = anchorClick
+      }
+
+      return element
+    })
+
+    await user.click(screen.getByRole('button', { name: /save result/i }))
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      routes.history,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ comparison_id: 42 }),
+      }),
+    )
+    await user.click(screen.getByRole('button', { name: /download html report/i }))
+    expect(anchorClick).toHaveBeenCalled()
+    expect(
+      screen.getByText(/html report downloaded/i),
     ).toBeInTheDocument()
   })
 

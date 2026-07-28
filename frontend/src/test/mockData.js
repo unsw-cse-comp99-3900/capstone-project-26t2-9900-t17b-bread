@@ -29,6 +29,7 @@ export const demoMetadata = {
 
 export const comparisonPayload = {
   focus: 'general',
+  comparison_id: 42,
   processing: {
     message: 'Comparison finished.',
   },

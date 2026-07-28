@@ -26,8 +26,9 @@ engine = create_engine(_normalize_url(DATABASE_URL))
 
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 
+from app.api.routes.auth import get_optional_user_from_header
 from app.schemas.compare import CompareRequest, CompareResponse, ComparisonFocus
 from app.services.article_input import ArticleInput
 from app.services.pipeline import (
@@ -265,6 +266,7 @@ def _build_compare_response(
     pair_result: PairPipelineResult,
     progress: ProgressTracker | None = None,
     session_token: str | None = None,
+    comparison_id: int | None = None,
 ) -> CompareResponse:
     """Build CompareResponse for all compare endpoints."""
 
@@ -288,6 +290,7 @@ def _build_compare_response(
         "errors": errors,
         "comparison": _build_comparison_payload(pair_result),
         "session_token": session_token,
+        "comparison_id": comparison_id,
     }
 
     supported_fields = _compare_response_fields()
@@ -385,6 +388,7 @@ async def _run_compare_inputs(
     focus: ComparisonFocus,
     *,
     progress: ProgressTracker | None = None,
+    user_id: int | None = None,
 ) -> CompareResponse:
     """
     Shared core controller logic.
@@ -404,6 +408,7 @@ async def _run_compare_inputs(
     frontend_matches = _build_frontend_matches(pair_result)
     scores = [m.get("score", 0.0) for m in frontend_matches]
     similarity_score = sum(scores) / len(scores) if scores else 0.0
+    comparison_id: int | None = None
 
     try:
         with engine.begin() as conn:
@@ -458,6 +463,13 @@ async def _run_compare_inputs(
 
             if db_id_a and db_id_b:
                 result_payload = {
+                    "focus": focus.value if hasattr(focus, "value") else str(focus),
+                    "articles": [
+                        article_payload
+                        for result in pair_result.articles
+                        if (article_payload := _build_frontend_article(result)) is not None
+                    ],
+                    "comparison": _build_comparison_payload(pair_result),
                     "matches": frontend_matches,
                     "similarity_score": round(similarity_score, 2),
                     "session_token": session_token
@@ -465,9 +477,12 @@ async def _run_compare_inputs(
                 
                 comparison_id = dal.insert_comparison_result(conn, db_id_a, db_id_b, result_payload)
                 
-                if comparison_id:
-                    dal.insert_history(conn, comparison_id)
-                    logger.info(f"[DB Sync] Automatically logged history for comparison ID: {comparison_id}")
+                if comparison_id and user_id is not None:
+                    dal.insert_history(conn, comparison_id, user_id)
+                    logger.info(
+                        "[DB Sync] Logged user history for comparison ID: %s",
+                        comparison_id,
+                    )
                 
         logger.info("[DB Sync Success] Sprint 2 pipeline alignment successfully coordinated.")
         
@@ -480,6 +495,7 @@ async def _run_compare_inputs(
         pair_result=pair_result,
         progress=progress,
         session_token=session_token,
+        comparison_id=comparison_id,
     )
 
 
@@ -490,6 +506,7 @@ async def _run_compare_inputs(
 )
 async def compare(
     payload: CompareRequest,
+    authorization: str | None = Header(default=None),
 ) -> CompareResponse:
     """
     URL and/or pasted-text comparison.
@@ -504,12 +521,14 @@ async def compare(
     article_a, article_b = _build_json_article_inputs(payload)
 
     progress = ProgressTracker(name="compare")
+    user = get_optional_user_from_header(authorization)
 
     return await _run_compare_inputs(
         article_a,
         article_b,
         payload.focus,
         progress=progress,
+        user_id=int(user["id"]) if user else None,
     )
 
 
@@ -519,6 +538,7 @@ async def compare(
 )
 async def compare_stream(
     payload: CompareRequest,
+    authorization: str | None = Header(default=None),
 ):
     """
     URL and/or pasted-text comparison.
@@ -536,6 +556,7 @@ async def compare_stream(
         await progress_queue.put(event)
 
     progress = ProgressTracker(name="compare").bind(on_progress)
+    user = get_optional_user_from_header(authorization)
 
     async def runner() -> dict:
         try:
@@ -546,6 +567,7 @@ async def compare_stream(
                 article_b,
                 payload.focus,
                 progress=progress,
+                user_id=int(user["id"]) if user else None,
             )
 
             return response.model_dump(exclude_none=True)
@@ -571,6 +593,7 @@ async def compare_files(
     article_a_file: UploadFile | None = File(default=None),
     article_b_file: UploadFile | None = File(default=None),
     focus: ComparisonFocus = Form(default=ComparisonFocus.GENERAL),
+    authorization: str | None = Header(default=None),
 ) -> CompareResponse:
     """
     Mixed URL / pasted-text / file comparison.
@@ -604,12 +627,14 @@ async def compare_files(
         ) from exc
 
     progress = ProgressTracker(name="compare")
+    user = get_optional_user_from_header(authorization)
 
     return await _run_compare_inputs(
         article_a,
         article_b,
         focus,
         progress=progress,
+        user_id=int(user["id"]) if user else None,
     )
 
 
@@ -625,6 +650,7 @@ async def compare_files_stream(
     article_a_file: UploadFile | None = File(default=None),
     article_b_file: UploadFile | None = File(default=None),
     focus: ComparisonFocus = Form(default=ComparisonFocus.GENERAL),
+    authorization: str | None = Header(default=None),
 ):
     """
     Mixed URL / pasted-text / file comparison.
@@ -663,6 +689,7 @@ async def compare_files_stream(
         await progress_queue.put(event)
 
     progress = ProgressTracker(name="compare").bind(on_progress)
+    user = get_optional_user_from_header(authorization)
 
     async def runner() -> dict:
         try:
@@ -671,6 +698,7 @@ async def compare_files_stream(
                 article_b,
                 focus,
                 progress=progress,
+                user_id=int(user["id"]) if user else None,
             )
 
             return response.model_dump(exclude_none=True)

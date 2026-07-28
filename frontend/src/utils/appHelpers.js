@@ -49,9 +49,11 @@ export function getDownloadFilename(contentDisposition, fallback) {
 }
 
 export function downloadJsonFile(payload, filename) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: 'application/json',
-  })
+  downloadTextFile(JSON.stringify(payload, null, 2), filename, 'application/json')
+}
+
+export function downloadTextFile(content, filename, type = 'text/plain') {
+  const blob = new Blob([content], { type })
   const objectUrl = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = objectUrl
