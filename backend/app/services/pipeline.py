@@ -38,6 +38,10 @@ VALID_FOCUS_VALUES = {
     "social",
 }
 
+SUMMARY_RELEVANCE_THRESHOLD = 0.60
+SUMMARY_COSINE_WEIGHT = 0.70
+SUMMARY_BM25_WEIGHT = 0.30
+
 
 @dataclass
 class ArticleResult:
@@ -66,6 +70,7 @@ class ComparisonPipelineResult:
     cross_mappings: list[dict[str, Any]]
     analysed_mappings: list[dict[str, Any]]
     relationships: list[dict[str, Any]]
+    comparison_summary: dict[str, Any]
 
     @property
     def ok(self) -> bool:
@@ -118,6 +123,7 @@ class ComparisonPipelineResult:
             },
             "cross_mappings": self.cross_mappings,
             "relationships": self.relationships,
+            "comparison_summary": self.comparison_summary,
         }
 
         if include_debug:
@@ -136,6 +142,12 @@ class PairPipelineResult:
 
     articles: list[ArticleResult]
     comparison: ComparisonPipelineResult | None = None
+    relevant: bool | None = None
+    relevance_score: float | None = None
+    cosine_relevance_score: float | None = None
+    bm25_relevance_score: float | None = None
+    relevance_threshold: float | None = None
+    message: str | None = None
 
 
 def _normalise_focus(focus: Any) -> str:
@@ -155,18 +167,237 @@ def _normalise_focus(focus: Any) -> str:
     return focus_value
 
 
+async def _prepare_article_for_comparison(
+    result: ArticleResult,
+    *,
+    progress: ProgressTracker | None = None,
+) -> ArticleResult:
+    """
+    Build paragraph chunks and embeddings only after
+    the summary relevance check passes.
+    """
+
+    if result.article is None:
+        return result
+
+    article_ref = result.article_ref
+
+    if progress is not None:
+        await progress.emit(
+            message=f"Building paragraph chunks for article {article_ref}...",
+            step="chunking",
+            article_ref=article_ref,
+            status="running",
+        )
+
+    paragraph_chunks = await asyncio.to_thread(
+        build_paragraph_chunks,
+        result.article,
+    )
+
+    if progress is not None:
+        await progress.emit(
+            message=f"Paragraph chunks ready for article {article_ref}.",
+            step="chunking",
+            article_ref=article_ref,
+            status="completed",
+        )
+        await progress.emit(
+            message=f"Generating semantic embeddings for article {article_ref}...",
+            step="embedding",
+            article_ref=article_ref,
+            status="running",
+        )
+
+    embedding_service = get_embedding_service()
+
+    chunk_embeddings = await asyncio.to_thread(
+        embedding_service.encode_paragraph_chunks,
+        paragraph_chunks,
+    )
+
+    result.paragraph_chunks = paragraph_chunks
+    result.chunk_embeddings = chunk_embeddings
+
+    if progress is not None:
+        await progress.emit(
+            message=f"Embeddings ready for article {article_ref}.",
+            step="embedding",
+            article_ref=article_ref,
+            status="completed",
+        )
+
+    return result
+
+
+def _get_summary_sentences(result: ArticleResult) -> list[str]:
+    """Extract clean text sentences from an article summary."""
+
+    if result.article is None:
+        return []
+
+    summary = result.article.summary or []
+    texts: list[str] = []
+
+    for item in summary:
+        if isinstance(item, str):
+            text = item
+        elif isinstance(item, dict):
+            text = item.get("text", "")
+        else:
+            text = getattr(item, "text", "")
+
+        cleaned = " ".join(str(text).split()).strip()
+
+        if cleaned:
+            texts.append(cleaned)
+
+    return texts
+
+
+def _build_summary_chunks(
+    result: ArticleResult,
+) -> list[dict[str, Any]]:
+    """Build one temporary chunk per summary sentence."""
+
+    summary_sentences = _get_summary_sentences(result)
+    chunks: list[dict[str, Any]] = []
+
+    for index, text in enumerate(summary_sentences):
+        chunks.append(
+            {
+                "chunk_id": f"{result.article_ref}-summary-{index}",
+                "article_ref": result.article_ref,
+                "chunk_type": "summary_sentence",
+                "chunk_index": index,
+                "paragraph_index": None,
+                "text": text,
+                "sentence_ids": [],
+                "char_start": None,
+                "char_end": None,
+                "word_count": len(text.split()),
+            }
+        )
+
+    return chunks
+
+
+def _average_top_scores(
+    pair_scores: list[dict[str, Any]],
+    *,
+    score_key: str,
+    top_k: int = 3,
+) -> float:
+    """Average the strongest pair scores."""
+
+    scores: list[float] = []
+
+    for pair in pair_scores:
+        value = pair.get(score_key)
+
+        if value is None:
+            continue
+
+        try:
+            scores.append(float(value))
+        except (TypeError, ValueError):
+            continue
+
+    if not scores:
+        return 0.0
+
+    scores.sort(reverse=True)
+    selected = scores[:top_k]
+
+    return sum(selected) / len(selected)
+
+
+async def _compute_summary_relevance(
+    article_a: ArticleResult,
+    article_b: ArticleResult,
+) -> tuple[float, float, float]:
+    """
+    Compare extractive-summary sentences using the existing
+    cosine and normalized BM25 services.
+
+    Returns:
+        relevance_score, cosine_score, bm25_score
+    """
+
+    chunks_a = _build_summary_chunks(article_a)
+    chunks_b = _build_summary_chunks(article_b)
+
+    if not chunks_a or not chunks_b:
+        return 0.0, 0.0, 0.0
+
+    embedding_service = get_embedding_service()
+
+    embeddings_a, embeddings_b = await asyncio.gather(
+        asyncio.to_thread(
+            embedding_service.encode_paragraph_chunks,
+            chunks_a,
+        ),
+        asyncio.to_thread(
+            embedding_service.encode_paragraph_chunks,
+            chunks_b,
+        ),
+    )
+
+    cosine_service = get_cosine_similarity_service()
+    bm25_service = get_bm25_similarity_service()
+
+    cosine_pairs, bm25_pairs = await asyncio.gather(
+        asyncio.to_thread(
+            cosine_service.compute_pair_scores,
+            embeddings_a,
+            embeddings_b,
+        ),
+        asyncio.to_thread(
+            bm25_service.compute_pair_scores,
+            chunks_a,
+            chunks_b,
+        ),
+    )
+
+    cosine_score = _average_top_scores(
+        cosine_pairs,
+        score_key="cosine_score",
+        top_k=3,
+    )
+
+    bm25_score = _average_top_scores(
+        bm25_pairs,
+        score_key="bm25_score",
+        top_k=3,
+    )
+
+    cosine_score = max(0.0, min(1.0, cosine_score))
+    bm25_score = max(0.0, min(1.0, bm25_score))
+
+    relevance_score = (
+        SUMMARY_COSINE_WEIGHT * cosine_score
+        + SUMMARY_BM25_WEIGHT * bm25_score
+    )
+
+    return relevance_score, cosine_score, bm25_score
+
+
 async def _run_post_fetch_pipeline(
     raw,
     article_ref: str,
     *,
     settings: Settings,
     progress: ProgressTracker | None = None,
+    prepare_comparison: bool = True,
 ) -> ArticleResult:
     """
     Run the single-article NLP pipeline after RawArticle is available.
 
-    This stage only handles one article:
-    RawArticle -> ProcessedArticle -> paragraph chunks -> SBERT embeddings
+    Always performs:
+    RawArticle -> ProcessedArticle -> extractive summary
+
+    When prepare_comparison is True, also performs:
+    paragraph chunks -> SBERT embeddings
     """
 
     if progress is not None:
@@ -213,51 +444,19 @@ async def _run_post_fetch_pipeline(
             status="completed",
         )
 
-        await progress.emit(
-            message=f"Building paragraph chunks for article {article_ref}...",
-            step="chunking",
-            article_ref=article_ref,
-            status="running",
-        )
-
-    paragraph_chunks = build_paragraph_chunks(processed)
-
-    if progress is not None:
-        await progress.emit(
-            message=f"Paragraph chunks ready for article {article_ref}.",
-            step="chunking",
-            article_ref=article_ref,
-            status="completed",
-        )
-        await progress.emit(
-            message=f"Generating semantic embeddings for article {article_ref}...",
-            step="embedding",
-            article_ref=article_ref,
-            status="running",
-        )
-
-    embedding_service = get_embedding_service()
-
-    chunk_embeddings = await asyncio.to_thread(
-        embedding_service.encode_paragraph_chunks,
-        paragraph_chunks,
-    )
-
-    if progress is not None:
-        await progress.emit(
-            message=f"Embeddings ready for article {article_ref}.",
-            step="embedding",
-            article_ref=article_ref,
-            status="completed",
-        )
-
-    return ArticleResult(
+    result = ArticleResult(
         article_ref=article_ref,
         url=raw.url,
         article=processed,
-        paragraph_chunks=paragraph_chunks,
-        chunk_embeddings=chunk_embeddings,
     )
+
+    if prepare_comparison:
+        await _prepare_article_for_comparison(
+            result,
+            progress=progress,
+        )
+
+    return result
 
 
 async def process_article_input(
@@ -267,6 +466,7 @@ async def process_article_input(
     progress: ProgressTracker | None = None,
     percent_start: int = 0,
     percent_end: int = 100,
+    prepare_comparison: bool = True,
 ) -> ArticleResult:
     """Run the full single-article pipeline for one URL or uploaded document."""
 
@@ -305,6 +505,7 @@ async def process_article_input(
             article_ref,
             settings=settings,
             progress=progress,
+            prepare_comparison=prepare_comparison,
         )
 
         if progress is not None:
@@ -557,6 +758,13 @@ async def _run_comparison_pipeline(
         chunks_b=chunks_b,
     )
 
+    summary_service = get_summary_service()
+
+    comparison_summary = await asyncio.to_thread(
+        summary_service.summarize_comparison,
+        relationships,
+    )
+
     if progress is not None:
         await progress.emit(
             percent=99,
@@ -576,6 +784,7 @@ async def _run_comparison_pipeline(
         cross_mappings=cross_mappings,
         analysed_mappings=analysed_mappings,
         relationships=relationships,
+        comparison_summary=comparison_summary,
     )
 
 
@@ -631,6 +840,7 @@ async def compare_pair_results(
 
     return comparison
 
+
 async def process_pair_inputs(
     article_a: ArticleInput,
     article_b: ArticleInput,
@@ -638,6 +848,7 @@ async def process_pair_inputs(
     settings: Settings | None = None,
     progress: ProgressTracker | None = None,
     finalize_progress: bool = True,
+    prepare_comparison: bool = True,
 ) -> list[ArticleResult]:
     """
     Process two mixed URL/upload inputs concurrently.
@@ -655,7 +866,8 @@ async def process_pair_inputs(
             settings=settings,
             progress=progress,
             percent_start=5,
-            percent_end=45,
+            percent_end=40,
+            prepare_comparison=prepare_comparison,
         )
 
     async def _run_b() -> ArticleResult:
@@ -663,8 +875,9 @@ async def process_pair_inputs(
             article_b,
             settings=settings,
             progress=progress,
-            percent_start=50,
-            percent_end=90,
+            percent_start=45,
+            percent_end=80,
+            prepare_comparison=prepare_comparison,
         )
 
     if progress is not None:
@@ -703,19 +916,117 @@ async def process_pair_inputs_with_comparison(
     progress: ProgressTracker | None = None,
 ) -> PairPipelineResult:
     """
-    Process two mixed URL/upload inputs and then run pair-level comparison.
+    Generate summaries first and check their relevance.
 
-    This is the preferred Sprint 2 entry point.
+    The full paragraph-level comparison pipeline only runs when
+    the summaries pass the relevance threshold.
     """
 
     settings = settings or get_settings()
 
+    # Phase 1:
+    # Resolve, preprocess, and summarize both articles.
+    # Do not build original paragraph chunks or embeddings yet.
     article_results = await process_pair_inputs(
         article_a,
         article_b,
         settings=settings,
         progress=progress,
         finalize_progress=False,
+        prepare_comparison=False,
+    )
+
+    # Stop when either article failed.
+    if (
+        len(article_results) < 2
+        or not article_results[0].ok
+        or not article_results[1].ok
+    ):
+        message = (
+            "Relevance check skipped because one or both articles failed."
+        )
+
+        if progress is not None:
+            await progress.emit(
+                percent=100,
+                message=message,
+                step="summary_relevance",
+                status="skipped",
+            )
+
+        return PairPipelineResult(
+            articles=article_results,
+            comparison=None,
+            relevant=None,
+            relevance_threshold=SUMMARY_RELEVANCE_THRESHOLD,
+            message=message,
+        )
+
+    if progress is not None:
+        await progress.emit(
+            percent=82,
+            message="Checking relevance between the article summaries...",
+            step="summary_relevance",
+            status="running",
+        )
+
+    (
+        relevance_score,
+        cosine_relevance_score,
+        bm25_relevance_score,
+    ) = await _compute_summary_relevance(
+        article_results[0],
+        article_results[1],
+    )
+
+    # Phase 2A:
+    # Summaries are not relevant enough, so stop here.
+    if relevance_score < SUMMARY_RELEVANCE_THRESHOLD:
+        message = (
+            "The articles are not relevant enough for detailed comparison."
+        )
+
+        if progress is not None:
+            await progress.emit(
+                percent=100,
+                message=message,
+                step="summary_relevance",
+                status="completed",
+            )
+
+        return PairPipelineResult(
+            articles=article_results,
+            comparison=None,
+            relevant=False,
+            relevance_score=relevance_score,
+            cosine_relevance_score=cosine_relevance_score,
+            bm25_relevance_score=bm25_relevance_score,
+            relevance_threshold=SUMMARY_RELEVANCE_THRESHOLD,
+            message=message,
+        )
+
+    if progress is not None:
+        await progress.emit(
+            percent=84,
+            message=(
+                "The summaries passed the relevance check. "
+                "Preparing detailed comparison..."
+            ),
+            step="summary_relevance",
+            status="completed",
+        )
+
+    # Phase 2B:
+    # Only now create paragraph chunks and embeddings from the full articles.
+    await asyncio.gather(
+        _prepare_article_for_comparison(
+            article_results[0],
+            progress=progress,
+        ),
+        _prepare_article_for_comparison(
+            article_results[1],
+            progress=progress,
+        ),
     )
 
     comparison = await compare_pair_results(
@@ -735,6 +1046,12 @@ async def process_pair_inputs_with_comparison(
     return PairPipelineResult(
         articles=article_results,
         comparison=comparison,
+        relevant=True,
+        relevance_score=relevance_score,
+        cosine_relevance_score=cosine_relevance_score,
+        bm25_relevance_score=bm25_relevance_score,
+        relevance_threshold=SUMMARY_RELEVANCE_THRESHOLD,
+        message="The articles passed the summary relevance check.",
     )
 
 

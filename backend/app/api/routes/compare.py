@@ -216,7 +216,9 @@ def _build_comparison_payload(
             ),
         },
         "matches": matches,
+        "comparison_summary": comparison.comparison_summary,
     }
+
 
 def _build_frontend_article(result: ArticleResult) -> dict[str, Any] | None:
     """
@@ -286,6 +288,14 @@ def _build_compare_response(
         "focus": focus,
         "articles": articles,
         "errors": errors,
+
+        "relevant": pair_result.relevant,
+        "relevance_score": pair_result.relevance_score,
+        "cosine_relevance_score": pair_result.cosine_relevance_score,
+        "bm25_relevance_score": pair_result.bm25_relevance_score,
+        "relevance_threshold": pair_result.relevance_threshold,
+        "message": pair_result.message,
+
         "comparison": _build_comparison_payload(pair_result),
         "session_token": session_token,
     }
