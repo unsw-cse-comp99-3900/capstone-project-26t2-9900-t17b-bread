@@ -135,16 +135,24 @@ def insert_history_entry(conn: Connection, comparison_id: int, user_id: int | No
     return conn.execute(query, {"comparison_id": comparison_id, "user_id": user_id}).scalar()
 
 def get_history(conn: Connection, user_id: int | None = None) -> List[Dict[str, Any]]:
-    where_clause = "WHERE h.user_id = :user_id" if user_id is not None else "WHERE h.user_id IS NULL"
+    if user_id is None:
+        query = text("""
+            SELECT h.id as history_id, h.saved_at, r.*
+            FROM public.history h
+            JOIN public.comparison_results r ON h.comparison_id = r.id
+            WHERE h.user_id IS NULL
+            ORDER BY h.saved_at DESC;
+        """)
+        return [dict(r) for r in conn.execute(query).mappings().all()]
+
     query = text("""
-        SELECT h.id as history_id, h.saved_at, r.* 
+        SELECT h.id as history_id, h.saved_at, r.*
         FROM public.history h
         JOIN public.comparison_results r ON h.comparison_id = r.id
-        """ + where_clause + """
+        WHERE h.user_id = :user_id
         ORDER BY h.saved_at DESC;
     """)
-    params = {"user_id": user_id} if user_id is not None else {}
-    return [dict(r) for r in conn.execute(query, params).mappings().all()]
+    return [dict(r) for r in conn.execute(query, {"user_id": user_id}).mappings().all()]
 
 def delete_history_item(conn: Connection, history_id: int, user_id: int | None = None) -> None:
     if user_id is None:
