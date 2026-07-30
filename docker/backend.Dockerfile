@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
 COPY backend/scripts ./scripts
+COPY backend/admin_server.py ./
 COPY backend/pytest.ini ./
 COPY database/database/init_db.sql /database/database/init_db.sql
 

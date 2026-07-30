@@ -19,6 +19,8 @@ const routes = {
   compare: '/api/compare/stream',
   compareFiles: '/api/compare/files/stream',
   authMe: '/api/auth/me',
+  authLogin: '/api/auth/login',
+  authRegister: '/api/auth/register',
   history: '/api/history',
 }
 
@@ -50,6 +52,21 @@ function mockFrontendFetch() {
           email: 'tester@example.com',
           display_name: 'Tester',
         }),
+      )
+    }
+
+    if (url === routes.authLogin || url === routes.authRegister) {
+      return Promise.resolve(
+        jsonResponse(
+          {
+            detail: [
+              {
+                msg: 'Username or password is incorrect.',
+              },
+            ],
+          },
+          false,
+        ),
       )
     }
 
@@ -126,7 +143,9 @@ describe('Narrative Diff frontend', () => {
       }),
     ).toBeInTheDocument()
     expect(screen.getByText(/try sample inputs/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /history/i })).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /history/i }),
+    ).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /compare articles/i })).toBeDisabled()
 
     await waitFor(() => {
@@ -214,6 +233,10 @@ describe('Narrative Diff frontend', () => {
     ).toBeInTheDocument()
     expect(screen.getByText(/article difference overview/i)).toBeInTheDocument()
     expect(screen.getByText(/matched pairs/i)).toBeInTheDocument()
+    expect(screen.getByText(/13.7\/20/i)).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: /sort by/i })).toHaveValue(
+      'best_match',
+    )
     expect(screen.getByRole('checkbox', { name: /^Aligned 1$/i })).toBeChecked()
     expect(
       screen.getByRole('checkbox', { name: /^Partially aligned 1$/i }),
@@ -234,6 +257,15 @@ describe('Narrative Diff frontend', () => {
     expect(
       screen.getByText(/both paragraphs describe the same eruption/i),
     ).toBeInTheDocument()
+    const evidencePanel = screen.getByRole('complementary')
+    expect(within(evidencePanel).getByText(/match strength/i)).toBeInTheDocument()
+    expect(within(evidencePanel).getAllByText(/18.0\/20/i).length).toBeGreaterThan(0)
+    expect(
+      within(evidencePanel).getByText(/stance discrepancy/i),
+    ).toBeInTheDocument()
+    expect(
+      within(evidencePanel).queryByText(/focus relevance/i),
+    ).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /close evidence panel/i }))
 
@@ -351,6 +383,61 @@ describe('Narrative Diff frontend', () => {
     ).toBeInTheDocument()
   })
 
+  it('shows specific login errors returned by the backend', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(screen.getByRole('button', { name: /login/i }))
+
+    const dialog = screen.getByRole('dialog', { name: /log in/i })
+    await user.type(within(dialog).getByLabelText(/username/i), 'MercuryWang76')
+    await user.type(within(dialog).getByLabelText(/password/i), 'wrongpass')
+    await user.click(within(dialog).getByRole('button', { name: /^log in$/i }))
+
+    expect(
+      await within(dialog).findByText(/username or password is incorrect/i),
+    ).toBeInTheDocument()
+    expect(
+      within(dialog).queryByText(/request could not be completed/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('clears article inputs when the user logs out', async () => {
+    localStorage.setItem(
+      'narrative-diff-auth',
+      JSON.stringify({
+        accessToken: 'test-token',
+        user: {
+          id: 1,
+          email: 'tester@example.com',
+          display_name: 'Tester',
+        },
+      }),
+    )
+
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText('Tester')
+
+    const urlInputs = screen.getAllByPlaceholderText(
+      /https:\/\/news-outlet.com\/article/i,
+    )
+    await user.type(urlInputs[0], 'https://example.com/article-a')
+    await user.type(urlInputs[1], 'https://example.com/article-b')
+
+    await user.click(screen.getByRole('button', { name: /logout/i }))
+
+    await waitFor(() => {
+      expect(urlInputs[0]).toHaveValue('')
+      expect(urlInputs[1]).toHaveValue('')
+    })
+    expect(screen.getByText(/^logged out\.$/i)).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /history/i }),
+    ).not.toBeInTheDocument()
+  })
+
   it('switches the mobile article tab state', async () => {
     const user = await runTextComparison()
     const articleATab = screen.getByRole('button', { name: /^Article A$/i })
@@ -365,24 +452,23 @@ describe('Narrative Diff frontend', () => {
     expect(articleBTab).toHaveClass('active')
   })
 
-  it('stores comparison history and can clear it', async () => {
+  it('keeps history hidden for logged-out comparisons', async () => {
+    await runTextComparison()
+
+    expect(
+      screen.queryByRole('button', { name: /history/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('uses backend-provided sorting options', async () => {
     const user = await runTextComparison()
 
-    expect(screen.getByRole('button', { name: /history1/i })).toBeInTheDocument()
-
-    await user.click(screen.getByRole('button', { name: /history1/i }))
-    const historyPanel = screen.getByRole('region', {
-      name: /comparison history/i,
-    })
-    expect(
-      within(historyPanel).getByText(/volcano eruption forces evacuations/i),
-    ).toBeInTheDocument()
-
-    await user.click(
-      within(historyPanel).getByRole('button', { name: /clear history/i }),
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /sort by/i }),
+      'most_divergent',
     )
-    expect(
-      within(historyPanel).getByText(/your recent comparisons will appear/i),
-    ).toBeInTheDocument()
+
+    expect(screen.getByText(/pair 2/i)).toBeInTheDocument()
+    expect(screen.getByText(/10.0\/20/i)).toBeInTheDocument()
   })
 })

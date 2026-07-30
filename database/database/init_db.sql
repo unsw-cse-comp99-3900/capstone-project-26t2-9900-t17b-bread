@@ -8,6 +8,13 @@ CREATE TABLE IF NOT EXISTS public.users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS username TEXT;
+ALTER TABLE public.users ALTER COLUMN email DROP NOT NULL;
+UPDATE public.users
+SET username = 'user_' || id
+WHERE username IS NULL OR username = '';
+ALTER TABLE public.users ALTER COLUMN username SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON public.users(username);
 CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
 
 CREATE TABLE IF NOT EXISTS public.auth_tokens (
