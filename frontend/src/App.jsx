@@ -2107,6 +2107,31 @@ function App() {
     )
   }
 
+  function resetComparisonWorkspace() {
+    setArticleAMode('url')
+    setArticleBMode('url')
+    setArticleAUrl('')
+    setArticleBUrl('')
+    setArticleAText('')
+    setArticleBText('')
+    setArticleAFile(null)
+    setArticleBFile(null)
+    setPdfInfoA(null)
+    setPdfInfoB(null)
+    setWordStatusA(null)
+    setWordStatusB(null)
+    setFormErrors({})
+    setApiErrors([])
+    setProgress(null)
+    setArticles([])
+    setComparison(null)
+    setComparisonId(null)
+    setVisibleLabels(getInitialFilters())
+    setSelectedMatchId(null)
+    setActiveMobileArticle('A')
+    setIsSaveOptionsOpen(false)
+  }
+
   async function detectPdfType(file, setPdfInfo) {
     if (!isPdfFile(file)) {
       setPdfInfo(null)
@@ -2612,6 +2637,7 @@ function App() {
     }
     saveAuthSession(null)
     setAuthSession(null)
+    resetComparisonWorkspace()
     setHistoryItems(loadComparisonHistory())
     setStatusMessage('Logged out. Browser history is shown locally.')
   }

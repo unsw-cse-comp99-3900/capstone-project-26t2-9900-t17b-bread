@@ -351,6 +351,41 @@ describe('Narrative Diff frontend', () => {
     ).toBeInTheDocument()
   })
 
+  it('clears article inputs when the user logs out', async () => {
+    localStorage.setItem(
+      'narrative-diff-auth',
+      JSON.stringify({
+        accessToken: 'test-token',
+        user: {
+          id: 1,
+          email: 'tester@example.com',
+          display_name: 'Tester',
+        },
+      }),
+    )
+
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText('Tester')
+
+    const urlInputs = screen.getAllByPlaceholderText(
+      /https:\/\/news-outlet.com\/article/i,
+    )
+    await user.type(urlInputs[0], 'https://example.com/article-a')
+    await user.type(urlInputs[1], 'https://example.com/article-b')
+
+    await user.click(screen.getByRole('button', { name: /logout/i }))
+
+    await waitFor(() => {
+      expect(urlInputs[0]).toHaveValue('')
+      expect(urlInputs[1]).toHaveValue('')
+    })
+    expect(
+      screen.getByText(/logged out. browser history is shown locally/i),
+    ).toBeInTheDocument()
+  })
+
   it('switches the mobile article tab state', async () => {
     const user = await runTextComparison()
     const articleATab = screen.getByRole('button', { name: /^Article A$/i })
