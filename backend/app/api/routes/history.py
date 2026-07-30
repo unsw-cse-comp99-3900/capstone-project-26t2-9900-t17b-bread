@@ -12,7 +12,14 @@ from app.api.routes.auth import DATABASE_URL, get_current_user_from_header
 from app.db import dal
 from app.db.base import _normalize_url
 
-engine = create_engine(_normalize_url(DATABASE_URL))
+# Force sync driver for SQLAlchemy
+sync_url = DATABASE_URL
+
+# Strip async driver prefixes
+sync_url = sync_url.replace("postgresql+psycopg://", "postgresql://")
+sync_url = sync_url.replace("postgresql+asyncpg://", "postgresql://")
+
+engine = create_engine(sync_url)
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 

@@ -2,35 +2,38 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
-
-from app.services.focus_scaling_service import get_focus_scaling_service
 
 
 DEFAULT_SEMANTIC_WEIGHT = 0.65
 DEFAULT_LEXICAL_WEIGHT = 0.35
 
 
-def _normalise_focus(focus: Any) -> str:
-    """
-    Convert frontend focus value or enum into a plain lowercase string.
-    """
-    if focus is None:
-        return "general"
-
-    if hasattr(focus, "value"):
-        focus = focus.value
-
-    return str(focus).strip().lower() or "general"
-
-
 class HybridScoringService:
     """
-    Combine SBERT cosine scores and BM25 lexical scores.
+    Combine SBERT cosine similarity and normalized BM25 similarity.
 
-    This service produces final pair-level hybrid scores.
-    It does not perform cross mapping, final alignment, relationship
-    classification, or explanation generation.
+    This service runs after:
+
+        1. CosineSimilarityService
+        2. BM25SimilarityService
+
+    It produces only the focus-independent base_hybrid_score required by
+    CandidateCrossMappingService.
+
+    This service intentionally does not:
+
+        - apply focus scaling;
+        - calculate focus relevance;
+        - create a focus-adjusted hybrid_score;
+        - filter candidates by a final threshold;
+        - perform cross mapping;
+        - run NLI;
+        - classify relationships.
+
+    Candidate filtering and mapping decisions belong to
+    CandidateCrossMappingService.
     """
 
     def combine_pair_scores(
@@ -38,42 +41,39 @@ class HybridScoringService:
         *,
         cosine_pair_scores: list[dict[str, Any]],
         bm25_pair_scores: list[dict[str, Any]],
-        chunk_embeddings_a: list[dict[str, Any]],
-        chunk_embeddings_b: list[dict[str, Any]],
-        focus: Any = "general",
         semantic_weight: float = DEFAULT_SEMANTIC_WEIGHT,
         lexical_weight: float = DEFAULT_LEXICAL_WEIGHT,
-        min_score: float | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Combine cosine and BM25 pair scores.
+        Combine cosine and BM25 scores into base_hybrid_score.
 
-        cosine_score represents semantic similarity.
-        bm25_score represents lexical overlap.
-        base_hybrid_score combines both scores.
-        hybrid_score applies the user focus scaling layer.
+        Formula:
+
+            base_hybrid_score = (
+                semantic_weight * cosine_score
+                + lexical_weight * bm25_score
+            )
+
+        The two weights are normalized to sum to 1.
+
+        cosine_score and bm25_score are bounded to [0, 1] before combination.
+        No score threshold is applied here, because CandidateCrossMappingService
+        is responsible for permissive candidate filtering.
         """
 
         if not cosine_pair_scores:
             return []
-
-        focus_value = _normalise_focus(focus)
 
         semantic_weight, lexical_weight = self._normalise_weights(
             semantic_weight,
             lexical_weight,
         )
 
-        bm25_lookup = self._build_bm25_lookup(bm25_pair_scores)
-
-        focus_scaling_service = get_focus_scaling_service()
-        focus_relevance_lookup = focus_scaling_service.compute_focus_relevance_lookup(
-            chunk_embeddings_a,
-            chunk_embeddings_b,
-            focus=focus_value,
+        bm25_lookup = self._build_bm25_lookup(
+            bm25_pair_scores
         )
 
-        hybrid_pair_scores: list[dict[str, Any]] = []
+        base_pair_scores: list[dict[str, Any]] = []
 
         for cosine_item in cosine_pair_scores:
             a_chunk_id = cosine_item.get("a_chunk_id")
@@ -82,16 +82,25 @@ class HybridScoringService:
             if not a_chunk_id or not b_chunk_id:
                 continue
 
-            key = (a_chunk_id, b_chunk_id)
-            bm25_item = bm25_lookup.get(key, {})
+            key = (
+                str(a_chunk_id),
+                str(b_chunk_id),
+            )
 
-            cosine_score = self._safe_float(
+            bm25_item = bm25_lookup.get(
+                key,
+                {},
+            )
+
+            cosine_score = self._get_bounded_score(
                 cosine_item.get("cosine_score"),
+                field_name="cosine_score",
                 default=0.0,
             )
 
-            bm25_score = self._safe_float(
+            bm25_score = self._get_bounded_score(
                 bm25_item.get("bm25_score"),
+                field_name="bm25_score",
                 default=0.0,
             )
 
@@ -105,32 +114,37 @@ class HybridScoringService:
                 + lexical_weight * bm25_score
             )
 
-            scaling_result = focus_scaling_service.apply_focus_scaling(
-                base_score=base_hybrid_score,
-                a_chunk_id=a_chunk_id,
-                b_chunk_id=b_chunk_id,
-                focus=focus_value,
-                focus_relevance_lookup=focus_relevance_lookup,
+            # Floating-point arithmetic may produce a value such as
+            # 1.0000000000000002, so clamp the final score to [0, 1].
+            base_hybrid_score = self._clamp(
+                base_hybrid_score
             )
 
-            hybrid_score = self._safe_float(
-                scaling_result.get("final_score"),
-                default=base_hybrid_score,
-            )
-
-            if min_score is not None and hybrid_score < min_score:
-                continue
-
-            hybrid_pair_scores.append(
+            base_pair_scores.append(
                 {
                     "a_chunk_id": a_chunk_id,
                     "b_chunk_id": b_chunk_id,
-                    "a_chunk_index": cosine_item.get("a_chunk_index"),
-                    "b_chunk_index": cosine_item.get("b_chunk_index"),
-                    "a_paragraph_index": cosine_item.get("a_paragraph_index"),
-                    "b_paragraph_index": cosine_item.get("b_paragraph_index"),
-                    "a_article_ref": cosine_item.get("a_article_ref"),
-                    "b_article_ref": cosine_item.get("b_article_ref"),
+
+                    "a_chunk_index": cosine_item.get(
+                        "a_chunk_index"
+                    ),
+                    "b_chunk_index": cosine_item.get(
+                        "b_chunk_index"
+                    ),
+
+                    "a_paragraph_index": cosine_item.get(
+                        "a_paragraph_index"
+                    ),
+                    "b_paragraph_index": cosine_item.get(
+                        "b_paragraph_index"
+                    ),
+
+                    "a_article_ref": cosine_item.get(
+                        "a_article_ref"
+                    ),
+                    "b_article_ref": cosine_item.get(
+                        "b_article_ref"
+                    ),
 
                     "cosine_score": cosine_score,
                     "bm25_score": bm25_score,
@@ -138,39 +152,42 @@ class HybridScoringService:
 
                     "semantic_weight": semantic_weight,
                     "lexical_weight": lexical_weight,
+
+                    # The only hybrid score produced at this stage.
                     "base_hybrid_score": base_hybrid_score,
-
-                    "focus": scaling_result.get("focus", focus_value),
-                    "a_focus_relevance": scaling_result.get("a_focus_relevance", 0.0),
-                    "b_focus_relevance": scaling_result.get("b_focus_relevance", 0.0),
-                    "pair_focus_relevance": scaling_result.get(
-                        "pair_focus_relevance",
-                        0.0,
-                    ),
-                    "scale_factor": scaling_result.get("scale_factor", 1.0),
-
-                    "hybrid_score": hybrid_score,
                 }
             )
 
-        hybrid_pair_scores.sort(
-            key=lambda item: item["hybrid_score"],
-            reverse=True,
+        # Sorting is only for deterministic output and easier inspection.
+        # CandidateCrossMappingService still performs its own candidate logic.
+        base_pair_scores.sort(
+            key=lambda item: (
+                -item["base_hybrid_score"],
+                self._safe_int(
+                    item.get("a_chunk_index")
+                ),
+                self._safe_int(
+                    item.get("b_chunk_index")
+                ),
+            )
         )
 
-        return hybrid_pair_scores
+        return base_pair_scores
 
     def _build_bm25_lookup(
         self,
         bm25_pair_scores: list[dict[str, Any]],
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """
-        Build lookup table by pair id.
+        Build a BM25 lookup keyed by:
 
-        Key:
             (a_chunk_id, b_chunk_id)
         """
-        lookup: dict[tuple[str, str], dict[str, Any]] = {}
+
+        lookup: dict[
+            tuple[str, str],
+            dict[str, Any],
+        ] = {}
 
         for item in bm25_pair_scores:
             a_chunk_id = item.get("a_chunk_id")
@@ -179,7 +196,12 @@ class HybridScoringService:
             if not a_chunk_id or not b_chunk_id:
                 continue
 
-            lookup[(a_chunk_id, b_chunk_id)] = item
+            key = (
+                str(a_chunk_id),
+                str(b_chunk_id),
+            )
+
+            lookup[key] = item
 
         return lookup
 
@@ -189,16 +211,90 @@ class HybridScoringService:
         lexical_weight: float,
     ) -> tuple[float, float]:
         """
-        Make sure semantic and lexical weights sum to 1.
-        """
-        total = semantic_weight + lexical_weight
+        Validate and normalize semantic and lexical weights.
 
-        if total <= 0:
+        Both weights must be finite and non-negative, and their sum must be
+        greater than zero.
+        """
+
+        semantic_weight = self._required_finite_float(
+            semantic_weight,
+            field_name="semantic_weight",
+        )
+
+        lexical_weight = self._required_finite_float(
+            lexical_weight,
+            field_name="lexical_weight",
+        )
+
+        if semantic_weight < 0.0:
+            raise ValueError(
+                "semantic_weight must be greater than or equal to 0."
+            )
+
+        if lexical_weight < 0.0:
+            raise ValueError(
+                "lexical_weight must be greater than or equal to 0."
+            )
+
+        total = (
+            semantic_weight
+            + lexical_weight
+        )
+
+        if total <= 0.0:
             raise ValueError(
                 "semantic_weight + lexical_weight must be greater than 0."
             )
 
-        return semantic_weight / total, lexical_weight / total
+        return (
+            semantic_weight / total,
+            lexical_weight / total,
+        )
+
+    def _get_bounded_score(
+        self,
+        value: Any,
+        *,
+        field_name: str,
+        default: float,
+    ) -> float:
+        """
+        Convert one normalized similarity score to a finite value in [0, 1].
+
+        Missing or non-numeric values use the supplied default. Finite values
+        outside [0, 1] are clamped because CandidateCrossMappingService expects
+        normalized input scores.
+        """
+
+        numeric_value = self._safe_float(
+            value,
+            default=default,
+        )
+
+        return self._clamp(
+            numeric_value
+        )
+
+    def _required_finite_float(
+        self,
+        value: Any,
+        *,
+        field_name: str,
+    ) -> float:
+        try:
+            converted = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{field_name} must be numeric."
+            ) from exc
+
+        if not math.isfinite(converted):
+            raise ValueError(
+                f"{field_name} must be finite."
+            )
+
+        return converted
 
     def _safe_float(
         self,
@@ -207,16 +303,46 @@ class HybridScoringService:
         default: float = 0.0,
     ) -> float:
         """
-        Convert value to float safely.
+        Convert a value to a finite float.
         """
+
         try:
-            return float(value)
+            converted = float(value)
         except (TypeError, ValueError):
             return default
+
+        if not math.isfinite(converted):
+            return default
+
+        return converted
+
+    def _safe_int(
+        self,
+        value: Any,
+        *,
+        default: int = 10**9,
+    ) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _clamp(
+        self,
+        value: float,
+        *,
+        minimum: float = 0.0,
+        maximum: float = 1.0,
+    ) -> float:
+        return max(
+            minimum,
+            min(maximum, value),
+        )
 
 
 _hybrid_scoring_service = HybridScoringService()
 
 
-def get_hybrid_scoring_service() -> HybridScoringService:
+def get_hybrid_scoring_service(
+) -> HybridScoringService:
     return _hybrid_scoring_service
