@@ -28,6 +28,7 @@ rank-bm25==0.2.2
 # DATABASE_URL is configured, so the backend still runs without a database.
 sqlalchemy[asyncio]==2.0.36
 psycopg[binary]==3.2.3
+psycopg2-binary
 
 # Dev / testing / CI
 pytest==8.3.4
