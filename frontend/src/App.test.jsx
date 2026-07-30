@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
@@ -126,7 +126,7 @@ describe('Narrative Diff frontend', () => {
       }),
     ).toBeInTheDocument()
     expect(screen.getByText(/try sample inputs/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /history/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /history/i })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /compare articles/i })).toBeDisabled()
 
     await waitFor(() => {
@@ -382,8 +382,9 @@ describe('Narrative Diff frontend', () => {
       expect(urlInputs[1]).toHaveValue('')
     })
     expect(
-      screen.getByText(/logged out. browser history is shown locally/i),
+      screen.getByText(/^logged out\.$/i),
     ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /history/i })).not.toBeInTheDocument()
   })
 
   it('switches the mobile article tab state', async () => {
@@ -400,24 +401,38 @@ describe('Narrative Diff frontend', () => {
     expect(articleBTab).toHaveClass('active')
   })
 
-  it('stores comparison history and can clear it', async () => {
+  it('shows comparison history only for logged-in users', async () => {
+    const anonymousUser = await runTextComparison()
+
+    expect(screen.queryByRole('button', { name: /history/i })).not.toBeInTheDocument()
+
+    await anonymousUser.click(screen.getByRole('button', { name: /about/i }))
+    await anonymousUser.click(screen.getByRole('button', { name: /close about dialog/i }))
+
+    localStorage.clear()
+    cleanup()
+    mockFrontendFetch()
+
+    localStorage.setItem(
+      'narrative-diff-auth',
+      JSON.stringify({
+        accessToken: 'test-token',
+        user: {
+          id: 1,
+          email: 'tester@example.com',
+          display_name: 'Tester',
+        },
+      }),
+    )
+
     const user = await runTextComparison()
 
-    expect(screen.getByRole('button', { name: /history1/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /history/i })).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: /history1/i }))
+    await user.click(screen.getByRole('button', { name: /history/i }))
     const historyPanel = screen.getByRole('region', {
       name: /comparison history/i,
     })
-    expect(
-      within(historyPanel).getByText(/volcano eruption forces evacuations/i),
-    ).toBeInTheDocument()
-
-    await user.click(
-      within(historyPanel).getByRole('button', { name: /clear history/i }),
-    )
-    expect(
-      within(historyPanel).getByText(/your recent comparisons will appear/i),
-    ).toBeInTheDocument()
+    expect(within(historyPanel).getByText(/saved comparisons will appear/i)).toBeInTheDocument()
   })
 })

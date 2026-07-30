@@ -60,7 +60,7 @@ src/
 - Friendly validation and backend error messages
 - Paragraph-level highlights and evidence panel
 - Basic login/register dialog
-- Account history backed by the database, with browser history fallback when logged out
+- Account history backed by the database for logged-in users
 - Relationship filters, summary, HTML report export, and copy summary
 - Desktop side-by-side layout and mobile Article A/B tabs
 
@@ -100,7 +100,7 @@ Current coverage:
 - Mocked comparison result display and paragraph highlights
 - Evidence panel, relationship filters, copy summary, and HTML report export
 - Mobile Article A/B tab state
-- Login dialog and browser-history fallback
+- Login dialog and database-backed account history
 
 ## Continuous Integration
 
