@@ -1,11 +1,13 @@
 -- Database Initialisation Script (Sprint 2 Updated)
 CREATE TABLE IF NOT EXISTS public.users (
     id SERIAL PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
+    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE,
     password_hash TEXT NOT NULL,
     display_name TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
 CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
 
 CREATE TABLE IF NOT EXISTS public.auth_tokens (
@@ -71,3 +73,5 @@ CREATE INDEX IF NOT EXISTS idx_chunks_article_id ON public.paragraph_chunks(arti
 CREATE INDEX IF NOT EXISTS idx_embeddings_chunk_id ON public.embeddings(chunk_id);
 CREATE INDEX IF NOT EXISTS idx_comparison_results_pairs ON public.comparison_results(article_a_id, article_b_id);
 CREATE INDEX IF NOT EXISTS idx_history_user_id ON public.history(user_id);
+
+

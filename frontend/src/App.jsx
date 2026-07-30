@@ -70,9 +70,9 @@ async function parseJsonResponse(response) {
   return payload
 }
 
-function isValidEmailAddress(value) {
-  const email = value.trim()
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+function isValidUsername(value) {
+  const username = value.trim()
+  return /^[a-zA-Z0-9_]{3,20}$/.test(username)
 }
 
 function escapeHtml(value) {
@@ -1658,15 +1658,14 @@ function AuthModal({
             </label>
           )}
           <label>
-            Email
+            Username
             <input
               type="text"
-              inputMode="email"
-              value={authForm.email}
+              value={authForm.username}
               onChange={(event) =>
-                onFormChange({ ...authForm, email: event.target.value })
+                onFormChange({ ...authForm, username: event.target.value })
               }
-              placeholder="name@example.com"
+              placeholder="Enter a UserName"
             />
           </label>
           <label>
@@ -1793,7 +1792,7 @@ function App() {
   const [authMode, setAuthMode] = useState('login')
   const [authForm, setAuthForm] = useState({
     displayName: '',
-    email: '',
+    username: '',
     password: '',
   })
   const [authError, setAuthError] = useState('')
@@ -2548,13 +2547,19 @@ function App() {
     event.preventDefault()
     setAuthError('')
 
-    const email = authForm.email.trim()
+    const username = authForm.username.trim()
     const password = authForm.password
 
-    if (!isValidEmailAddress(email)) {
-      setAuthError('Enter a valid email address.')
-      return
-    }
+    if (!username) {
+    setAuthError('Enter a username.')
+    return
+  }
+
+  if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+    setAuthError('Username must be 3–20 characters, letters/numbers/underscore only.')
+    return
+  }
+
 
     if (!password) {
       setAuthError('Enter your password.')
@@ -2571,7 +2576,7 @@ function App() {
     const endpoint =
       authMode === 'register' ? '/api/auth/register' : '/api/auth/login'
     const body = {
-      email,
+      username,
       password,
     }
 
@@ -2593,9 +2598,9 @@ function App() {
       saveAuthSession(nextSession)
       setAuthSession(nextSession)
       setIsAuthOpen(false)
-      setAuthForm({ displayName: '', email: '', password: '' })
+      setAuthForm({ displayName: '', username: '', password: '' })
       await refreshAccountHistory(payload.access_token)
-      setStatusMessage(`Logged in as ${payload.user.display_name || payload.user.email}.`)
+      setStatusMessage(`Logged in as ${payload.user.display_name || payload.user.username}.`)
     } catch (error) {
       setAuthError(error.message)
     } finally {
@@ -2734,7 +2739,7 @@ function App() {
           {currentUser ? (
             <>
               <span className="user-pill">
-                {currentUser.display_name || currentUser.email}
+                {currentUser.display_name || currentUser.username}
               </span>
               <button
                 className="header-pill-button"

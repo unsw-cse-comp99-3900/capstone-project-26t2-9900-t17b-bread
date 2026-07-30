@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import re
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, Header, HTTPException, status
@@ -24,7 +25,14 @@ if not DATABASE_URL:
         "postgresql://postgres:postgres@localhost:5432/postgres",
     )
 
-engine = create_engine(_normalize_url(DATABASE_URL))
+# Force sync driver for SQLAlchemy
+sync_url = DATABASE_URL
+
+# Strip async driver prefixes
+sync_url = sync_url.replace("postgresql+psycopg://", "postgresql://")
+sync_url = sync_url.replace("postgresql+asyncpg://", "postgresql://")
+
+engine = create_engine(sync_url)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -32,37 +40,44 @@ HASH_NAME = "sha256"
 HASH_ITERATIONS = 120_000
 
 
+import re
+
+USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,20}$")
+
 class AuthRequest(BaseModel):
-    email: str
+    username: str
     password: str = Field(min_length=6)
     display_name: str | None = Field(default=None, max_length=80)
 
-    @field_validator("email")
+    @field_validator("username")
     @classmethod
-    def _validate_email(cls, value: str) -> str:
-        email = value.lower().strip()
-        if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
-            raise ValueError("Enter a valid email address.")
-        return email
+    def _validate_username(cls, value: str) -> str:
+        username = value.strip()
+        if not USERNAME_RE.match(username):
+            raise ValueError("Username must be 3–20 chars, letters/numbers/underscore only.")
+        return username
+
 
 
 class LoginRequest(BaseModel):
-    email: str
+    username: str
     password: str = Field(min_length=1)
 
-    @field_validator("email")
+    @field_validator("username")
     @classmethod
-    def _validate_email(cls, value: str) -> str:
-        email = value.lower().strip()
-        if "@" not in email or "." not in email.rsplit("@", 1)[-1]:
-            raise ValueError("Enter a valid email address.")
-        return email
+    def _validate_username(cls, value: str) -> str:
+        username = value.strip()
+        if not USERNAME_RE.match(username):
+            raise ValueError("Enter a valid username.")
+        return username
+
 
 
 class AuthUser(BaseModel):
     id: int
-    email: str
+    username: str
     display_name: str | None = None
+
 
 
 class AuthResponse(BaseModel):
@@ -147,27 +162,28 @@ def _auth_response_for_user(conn, user: dict) -> AuthResponse:
         access_token=token,
         user=AuthUser(
             id=int(user["id"]),
-            email=user["email"],
+            username=user["username"],
             display_name=user.get("display_name"),
         ),
     )
 
 
+
 @router.post("/register", response_model=AuthResponse)
 async def register(payload: AuthRequest) -> AuthResponse:
-    email = payload.email.lower().strip()
+    username = payload.username.strip()
 
     with engine.begin() as conn:
-        existing = dal.get_user_by_email(conn, email)
+        existing = dal.get_user_by_username(conn, username)
         if existing is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="An account already exists for this email.",
+                detail="An account already exists for this username.",
             )
 
         user_id = dal.create_user(
             conn,
-            email,
+            username,
             _hash_password(payload.password),
             payload.display_name.strip() if payload.display_name else None,
         )
@@ -175,18 +191,20 @@ async def register(payload: AuthRequest) -> AuthResponse:
         return _auth_response_for_user(conn, user)
 
 
+
 @router.post("/login", response_model=AuthResponse)
 async def login(payload: LoginRequest) -> AuthResponse:
-    email = payload.email.lower().strip()
+    username = payload.username.strip()
 
     with engine.begin() as conn:
-        user = dal.get_user_by_email(conn, email)
+        user = dal.get_user_by_username(conn, username)
         if user is None or not _verify_password(payload.password, user["password_hash"]):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Email or password is incorrect.",
+                detail="Username or password is incorrect.",
             )
         return _auth_response_for_user(conn, user)
+
 
 
 @router.get("/me", response_model=AuthUser)
@@ -194,7 +212,7 @@ async def me(authorization: str | None = Header(default=None)) -> AuthUser:
     user = get_current_user_from_header(authorization)
     return AuthUser(
         id=int(user["id"]),
-        email=user["email"],
+        username=user["username"],
         display_name=user.get("display_name"),
     )
 

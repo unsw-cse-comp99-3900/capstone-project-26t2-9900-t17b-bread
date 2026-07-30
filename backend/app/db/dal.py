@@ -3,27 +3,30 @@ from typing import Any, List, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-def create_user(conn: Connection, email: str, password_hash: str, display_name: str | None = None) -> int:
+def create_user(conn: Connection, username: str, password_hash: str, display_name: str | None = None) -> int:
     query = text("""
-        INSERT INTO public.users (email, password_hash, display_name)
-        VALUES (:email, :password_hash, :display_name)
+        INSERT INTO public.users (username, password_hash, display_name)
+        VALUES (:username, :password_hash, :display_name)
         RETURNING id;
     """)
     return conn.execute(query, {
-        "email": email,
+        "username": username,
         "password_hash": password_hash,
         "display_name": display_name,
     }).scalar()
 
-def get_user_by_email(conn: Connection, email: str) -> Optional[Dict[str, Any]]:
-    query = text("SELECT * FROM public.users WHERE email = :email;")
-    row = conn.execute(query, {"email": email}).mappings().first()
+
+def get_user_by_username(conn: Connection, username: str) -> Optional[Dict[str, Any]]:
+    query = text("SELECT * FROM public.users WHERE username = :username;")
+    row = conn.execute(query, {"username": username}).mappings().first()
     return dict(row) if row else None
 
+
 def get_user(conn: Connection, user_id: int) -> Optional[Dict[str, Any]]:
-    query = text("SELECT id, email, display_name, created_at FROM public.users WHERE id = :id;")
+    query = text("SELECT id, username, display_name, created_at FROM public.users WHERE id = :id;")
     row = conn.execute(query, {"id": user_id}).mappings().first()
     return dict(row) if row else None
+
 
 def insert_auth_token(conn: Connection, user_id: int, token: str) -> int:
     query = text("""
@@ -35,13 +38,14 @@ def insert_auth_token(conn: Connection, user_id: int, token: str) -> int:
 
 def get_user_by_token(conn: Connection, token: str) -> Optional[Dict[str, Any]]:
     query = text("""
-        SELECT u.id, u.email, u.display_name, u.created_at
+        SELECT u.id, u.username, u.display_name, u.created_at
         FROM public.auth_tokens t
         JOIN public.users u ON u.id = t.user_id
         WHERE t.token = :token;
     """)
     row = conn.execute(query, {"token": token}).mappings().first()
     return dict(row) if row else None
+
 
 def delete_auth_token(conn: Connection, token: str) -> None:
     query = text("DELETE FROM public.auth_tokens WHERE token = :token;")
