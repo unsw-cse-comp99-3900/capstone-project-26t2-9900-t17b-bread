@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import {
   articleInputModes,
   authSessionKey,
+  comparisonHistoryKey,
   demoIndexPath,
   focusOptions,
   friendlyErrorMessages,
+  maxHistoryItems,
   maxUploadSizeBytes,
   minTextChars,
   relationshipOptions,
@@ -22,6 +24,22 @@ import {
   readTextDemoAsset,
 } from './utils/appHelpers'
 import './App.css'
+
+function loadComparisonHistory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(comparisonHistoryKey) ?? '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function saveComparisonHistory(items) {
+  localStorage.setItem(
+    comparisonHistoryKey,
+    JSON.stringify(items.slice(0, maxHistoryItems)),
+  )
+}
 
 function loadAuthSession() {
   try {
@@ -70,7 +88,6 @@ function getHistoryArticleTitle(article, fallback) {
   return article?.title || article?.source_domain || fallback
 }
 
-// eslint-disable-next-line no-unused-vars
 function buildHistoryItem({ focus, articles, comparison }) {
   const savedAt = new Date().toISOString()
   const articleA = articles.find((article) => article.article_ref === 'A')
@@ -1768,7 +1785,7 @@ function App() {
   const [activeMobileArticle, setActiveMobileArticle] = useState('A')
   const [demoSamples, setDemoSamples] = useState([])
   const [demoLoadError, setDemoLoadError] = useState('')
-  const [historyItems, setHistoryItems] = useState([])
+  const [historyItems, setHistoryItems] = useState(loadComparisonHistory)
   const [isHistoryOpen, setIsHistoryOpen] = useState(false)
   const [isSaveOptionsOpen, setIsSaveOptionsOpen] = useState(false)
   const [authSession, setAuthSession] = useState(loadAuthSession)
@@ -1806,7 +1823,7 @@ function App() {
 
   async function refreshAccountHistory(token = authToken) {
     if (!token) {
-      setHistoryItems([])
+      setHistoryItems(loadComparisonHistory())
       return
     }
 
@@ -1826,7 +1843,7 @@ function App() {
 
     async function loadAccountData() {
       if (!authToken) {
-        setHistoryItems([])
+        setHistoryItems(loadComparisonHistory())
         return
       }
 
@@ -1850,7 +1867,7 @@ function App() {
         }
         saveAuthSession(null)
         setAuthSession(null)
-        setHistoryItems([])
+        setHistoryItems(loadComparisonHistory())
       }
     }
 
@@ -2401,6 +2418,20 @@ function App() {
         if (hasBackendMatches) {
           if (authToken) {
             await refreshAccountHistory(authToken)
+          } else {
+            const historyItem = buildHistoryItem({
+              focus: data.focus ?? focus,
+              articles: returnedArticles,
+              comparison: backendComparison,
+            })
+            setHistoryItems((currentItems) => {
+              const nextItems = [
+                historyItem,
+                ...currentItems.filter((item) => item.id !== historyItem.id),
+              ].slice(0, maxHistoryItems)
+              saveComparisonHistory(nextItems)
+              return nextItems
+            })
           }
           setStatusMessage(
             `Live comparison result loaded with the "${getFocusLabel(data.focus)}" focus.`,
@@ -2498,37 +2529,44 @@ function App() {
   }
 
   async function handleClearHistory() {
-    if (!authToken) {
+    if (authToken) {
+      try {
+        await fetch('/api/history', {
+          method: 'DELETE',
+          headers: authHeaders(authToken),
+        }).then(parseJsonResponse)
+        setHistoryItems([])
+        setStatusMessage('Account history cleared.')
+      } catch (error) {
+        setStatusMessage(`Could not clear account history. ${error.message}`)
+      }
       return
     }
 
-    try {
-      await fetch('/api/history', {
-        method: 'DELETE',
-        headers: authHeaders(authToken),
-      }).then(parseJsonResponse)
-      setHistoryItems([])
-      setStatusMessage('Account history cleared.')
-    } catch (error) {
-      setStatusMessage(`Could not clear account history. ${error.message}`)
-    }
+    saveComparisonHistory([])
+    setHistoryItems([])
   }
 
   async function handleDeleteHistoryItem(itemId) {
-    if (!authToken) {
+    if (authToken) {
+      try {
+        await fetch(`/api/history/${itemId}`, {
+          method: 'DELETE',
+          headers: authHeaders(authToken),
+        }).then(parseJsonResponse)
+        await refreshAccountHistory(authToken)
+        setStatusMessage('Saved comparison removed from account history.')
+      } catch (error) {
+        setStatusMessage(`Could not delete account history item. ${error.message}`)
+      }
       return
     }
 
-    try {
-      await fetch(`/api/history/${itemId}`, {
-        method: 'DELETE',
-        headers: authHeaders(authToken),
-      }).then(parseJsonResponse)
-      await refreshAccountHistory(authToken)
-      setStatusMessage('Saved comparison removed from account history.')
-    } catch (error) {
-      setStatusMessage(`Could not delete account history item. ${error.message}`)
-    }
+    setHistoryItems((currentItems) => {
+      const nextItems = currentItems.filter((item) => item.id !== itemId)
+      saveComparisonHistory(nextItems)
+      return nextItems
+    })
   }
 
   async function handleAuthSubmit(event) {
@@ -2600,9 +2638,8 @@ function App() {
     saveAuthSession(null)
     setAuthSession(null)
     resetComparisonWorkspace()
-    setHistoryItems([])
-    setIsHistoryOpen(false)
-    setStatusMessage('Logged out.')
+    setHistoryItems(loadComparisonHistory())
+    setStatusMessage('Logged out. Browser history is shown locally.')
   }
 
   function scrollToTop() {
@@ -2712,16 +2749,16 @@ function App() {
           <span>Narrative Diff</span>
         </a>
         <div className="header-actions">
+          <button
+            className="history-button"
+            type="button"
+            onClick={() => setIsHistoryOpen((isOpen) => !isOpen)}
+          >
+            History
+            {historyItems.length > 0 && <span>{historyItems.length}</span>}
+          </button>
           {currentUser ? (
             <>
-              <button
-                className="history-button"
-                type="button"
-                onClick={() => setIsHistoryOpen((isOpen) => !isOpen)}
-              >
-                History
-                {historyItems.length > 0 && <span>{historyItems.length}</span>}
-              </button>
               <span className="user-pill">
                 {currentUser.display_name || currentUser.email}
               </span>
@@ -2832,17 +2869,15 @@ function App() {
       />
 
       <main>
-        {currentUser && (
-          <HistoryPanel
-            historyItems={historyItems}
-            isOpen={isHistoryOpen}
-            onClose={() => setIsHistoryOpen(false)}
-            onRestore={handleRestoreHistory}
-            onDelete={handleDeleteHistoryItem}
-            onClear={handleClearHistory}
-            currentUser={currentUser}
-          />
-        )}
+        <HistoryPanel
+          historyItems={historyItems}
+          isOpen={isHistoryOpen}
+          onClose={() => setIsHistoryOpen(false)}
+          onRestore={handleRestoreHistory}
+          onDelete={handleDeleteHistoryItem}
+          onClear={handleClearHistory}
+          currentUser={currentUser}
+        />
 
         <section className="hero-section">
           <p className="eyebrow">Compare reporting. See the difference.</p>

@@ -22,7 +22,9 @@ export const maxUploadSizeBytes = 10 * 1024 * 1024
 export const minTextChars = 20
 
 export const demoIndexPath = '/demo-files/index.json'
+export const comparisonHistoryKey = 'narrative-diff-history'
 export const authSessionKey = 'narrative-diff-auth'
+export const maxHistoryItems = 10
 
 export const friendlyErrorMessages = {
   url_missing: {
