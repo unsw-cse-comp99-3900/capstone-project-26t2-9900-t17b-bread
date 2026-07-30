@@ -17,17 +17,18 @@ from app.db.base import Base
 
 
 class User(Base):
-    """``users`` table - login identity for saved history."""
-
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    username: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    #keep email but make it nullable
+    email: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.current_timestamp()
     )
+
 
 
 class AuthToken(Base):
