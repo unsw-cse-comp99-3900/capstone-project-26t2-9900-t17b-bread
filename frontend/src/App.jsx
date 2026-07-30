@@ -2,11 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import {
   articleInputModes,
   authSessionKey,
-  comparisonHistoryKey,
   demoIndexPath,
   focusOptions,
   friendlyErrorMessages,
-  maxHistoryItems,
   maxUploadSizeBytes,
   minTextChars,
   relationshipOptions,
@@ -24,22 +22,6 @@ import {
   readTextDemoAsset,
 } from './utils/appHelpers'
 import './App.css'
-
-function loadComparisonHistory() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(comparisonHistoryKey) ?? '[]')
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function saveComparisonHistory(items) {
-  localStorage.setItem(
-    comparisonHistoryKey,
-    JSON.stringify(items.slice(0, maxHistoryItems)),
-  )
-}
 
 function loadAuthSession() {
   try {
@@ -65,9 +47,37 @@ function authHeaders(authToken) {
 async function parseJsonResponse(response) {
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new Error(payload.detail || 'The request could not be completed.')
+    throw new Error(parseResponseErrorMessage(payload))
   }
   return payload
+}
+
+function parseResponseErrorMessage(payload) {
+  const detail = payload?.detail
+
+  if (typeof detail === 'string') {
+    return detail
+  }
+
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => item?.msg ?? item?.message)
+      .filter(Boolean)
+
+    if (messages.length > 0) {
+      return messages.join(' ')
+    }
+  }
+
+  if (typeof detail?.message === 'string') {
+    return detail.message
+  }
+
+  if (typeof payload?.message === 'string') {
+    return payload.message
+  }
+
+  return 'The request could not be completed.'
 }
 
 function isValidUsername(value) {
@@ -88,26 +98,6 @@ function getHistoryArticleTitle(article, fallback) {
   return article?.title || article?.source_domain || fallback
 }
 
-function buildHistoryItem({ focus, articles, comparison }) {
-  const savedAt = new Date().toISOString()
-  const articleA = articles.find((article) => article.article_ref === 'A')
-  const articleB = articles.find((article) => article.article_ref === 'B')
-  const focusLabel = getFocusLabel(focus)
-
-  return {
-    id: `${Date.now()}`,
-    saved_at: savedAt,
-    focus,
-    label: `${getHistoryArticleTitle(articleA, 'Article A')} vs ${getHistoryArticleTitle(
-      articleB,
-      'Article B',
-    )}`,
-    description: `${focusLabel} · ${new Date(savedAt).toLocaleString()}`,
-    articles,
-    comparison,
-  }
-}
-
 function normalizeHistoryItem(item) {
   const focusLabel = getFocusLabel(item.focus)
   const savedAt = item.saved_at ?? new Date().toISOString()
@@ -115,7 +105,8 @@ function normalizeHistoryItem(item) {
     ...item,
     id: `${item.id ?? item.history_id ?? item.comparison_id ?? savedAt}`,
     saved_at: savedAt,
-    description: `${focusLabel} - ${new Date(savedAt).toLocaleString()}`,
+    description:
+      item.description ?? `${focusLabel} - ${new Date(savedAt).toLocaleString()}`,
   }
 }
 
@@ -158,14 +149,15 @@ function buildHtmlReport({
   articleB,
   matches,
   counts,
+  summary,
+  scoreGuides,
   generatedAt,
 }) {
   const relationshipLabel = (label) =>
     relationshipOptions.find((option) => option.value === label)?.label ?? label
   const totalPairs = matches.length
-  const averageScore = getAverageMatchScore(matches)
   const averageScoreLabel =
-    averageScore == null ? 'N/A' : `${Math.round(averageScore * 100)}%`
+    formatSummaryScore(summary, 'average_match_strength')
   const generatedLabel = new Date(generatedAt).toLocaleString()
   const reportLogo = `
     <svg class="brand-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true">
@@ -197,16 +189,33 @@ function buildHtmlReport({
   const matchBlocks = matches.length
     ? matches
         .map(
-          (match) => `
+          (match) => {
+            const scoreDetails = getScoreDetailItems(match, scoreGuides)
+              .map(
+                (item) => `
+                  <div title="${escapeHtml(item.tooltip)}">
+                    <dt>${escapeHtml(item.label)}</dt>
+                    <dd>
+                      ${escapeHtml(item.value)}
+                      ${item.level ? `<span>${escapeHtml(item.level)}</span>` : ''}
+                    </dd>
+                    ${item.interpretation ? `<p>${escapeHtml(item.interpretation)}</p>` : ''}
+                  </div>
+                `,
+              )
+              .join('')
+
+            return `
             <article class="pair pair--${escapeHtml(match.label)}">
               <div class="pair-header">
                 <div>
                   <strong>Pair ${escapeHtml(match.pairNumber ?? '')}</strong>
                   <span class="pill pill--${escapeHtml(match.label)}">${escapeHtml(relationshipLabel(match.label))}</span>
                 </div>
-                <em>Score ${Math.round(Number(match.score ?? 0) * 100)}%</em>
+                <em>Match ${escapeHtml(formatPublicScore(match, 'match_strength'))}</em>
               </div>
               <p class="explanation">${escapeHtml(match.explanation ?? 'No explanation available.')}</p>
+              <dl class="score-list">${scoreDetails}</dl>
               <div class="evidence-grid">
                 <section>
                   <h3>Article A</h3>
@@ -218,7 +227,8 @@ function buildHtmlReport({
                 </section>
               </div>
             </article>
-          `,
+          `
+          },
         )
         .join('')
     : '<p class="empty">No matched evidence was returned for this comparison.</p>'
@@ -466,6 +476,42 @@ function buildHtmlReport({
       color: #4b596f;
       line-height: 1.55;
     }
+    .score-list {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 14px 0 18px;
+      padding: 0;
+    }
+    .score-list div {
+      border: 1px solid #e2dccf;
+      border-radius: 14px;
+      padding: 12px;
+      background: #f8f6ef;
+    }
+    .score-list p {
+      margin: 8px 0 0;
+      color: #627086;
+      font-size: 13px;
+    }
+    .score-list dt {
+      color: #627086;
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .score-list dd {
+      margin: 4px 0 0;
+      font-weight: 850;
+    }
+    .score-list dd span {
+      display: block;
+      margin-top: 4px;
+      color: #627086;
+      font-size: 12px;
+      font-weight: 700;
+    }
     p {
       line-height: 1.65;
     }
@@ -511,7 +557,8 @@ function buildHtmlReport({
       }
       .articles,
       .summary,
-      .evidence-grid {
+      .evidence-grid,
+      .score-list {
         grid-template-columns: 1fr;
       }
     }
@@ -529,7 +576,7 @@ function buildHtmlReport({
         <h1>How the coverage compares</h1>
         <p class="meta">
           A readable export of the paragraph-level comparison result, including
-          relationship labels, confidence scores, explanations, and source evidence.
+          relationship labels, 0-20 scores, explanations, and source evidence.
         </p>
       </div>
       <aside class="meta-card" aria-label="Report metadata">
@@ -543,7 +590,7 @@ function buildHtmlReport({
             <dd>${escapeHtml(getFocusLabel(focus))}</dd>
           </div>
           <div>
-            <dt>Average score</dt>
+            <dt>Average match strength</dt>
             <dd>${escapeHtml(averageScoreLabel)}</dd>
           </div>
         </dl>
@@ -681,16 +728,106 @@ function getMatchCounts(matches) {
   )
 }
 
-function getAverageMatchScore(matches) {
-  const scores = matches
-    .map((match) => Number(match.score))
-    .filter((score) => Number.isFinite(score))
+function getPublicScoreValue(match, scoreKey) {
+  const score = Number(match?.[scoreKey]?.score)
+  return Number.isFinite(score) ? score : null
+}
 
-  if (scores.length === 0) {
-    return null
+function formatPublicScore(match, scoreKey, fallbackLabel = 'N/A') {
+  const score = getPublicScoreValue(match, scoreKey)
+  return score == null ? fallbackLabel : `${score.toFixed(1)}/20`
+}
+
+function formatSummaryScore(summary, scoreKey) {
+  const score = Number(summary?.[scoreKey])
+  return Number.isFinite(score) ? `${score.toFixed(1)}/20` : 'N/A'
+}
+
+function formatScoreLevel(level) {
+  if (!level) {
+    return ''
   }
 
-  return scores.reduce((total, score) => total + score, 0) / scores.length
+  return String(level)
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function getScoreGuide(scoreGuides, scoreKey) {
+  return scoreGuides?.[scoreKey] ?? null
+}
+
+function getScoreGuideTitle(scoreGuides, scoreKey, fallbackLabel) {
+  return getScoreGuide(scoreGuides, scoreKey)?.title ?? fallbackLabel
+}
+
+function buildScoreGuideTooltip(scoreGuide) {
+  if (!scoreGuide) {
+    return ''
+  }
+
+  const bands = Array.isArray(scoreGuide.bands)
+    ? scoreGuide.bands
+        .map((band) => `${band.min}-${band.max}: ${formatScoreLevel(band.level)}`)
+        .join('; ')
+    : ''
+
+  return [scoreGuide.question, bands, scoreGuide.disclaimer]
+    .filter(Boolean)
+    .join(' ')
+}
+
+function getScoreDetailItems(match, scoreGuides) {
+  const matchStrengthGuide = getScoreGuide(scoreGuides, 'match_strength')
+  const stanceDiscrepancyGuide = getScoreGuide(
+    scoreGuides,
+    'stance_discrepancy',
+  )
+  const items = [
+    {
+      key: 'match_strength',
+      label: getScoreGuideTitle(scoreGuides, 'match_strength', 'Match strength'),
+      value: formatPublicScore(match, 'match_strength'),
+      level: formatScoreLevel(match?.match_strength?.level),
+      interpretation: match?.match_strength?.interpretation,
+      disclaimer: matchStrengthGuide?.disclaimer,
+      tooltip: buildScoreGuideTooltip(matchStrengthGuide),
+    },
+    {
+      key: 'stance_discrepancy',
+      label: getScoreGuideTitle(
+        scoreGuides,
+        'stance_discrepancy',
+        'Stance discrepancy',
+      ),
+      value: formatPublicScore(match, 'stance_discrepancy'),
+      level: formatScoreLevel(match?.stance_discrepancy?.level),
+      interpretation: match?.stance_discrepancy?.interpretation,
+      disclaimer:
+        match?.stance_discrepancy?.disclaimer ??
+        stanceDiscrepancyGuide?.disclaimer,
+      tooltip: buildScoreGuideTooltip(stanceDiscrepancyGuide),
+    },
+  ]
+
+  if (match?.factor_relevance) {
+    const factorRelevanceGuide = getScoreGuide(scoreGuides, 'factor_relevance')
+    items.splice(1, 0, {
+      key: 'factor_relevance',
+      label: getScoreGuideTitle(
+        scoreGuides,
+        'factor_relevance',
+        `${match.factor_relevance.factor ?? 'Focus'} relevance`,
+      ),
+      value: formatPublicScore(match, 'factor_relevance'),
+      level: formatScoreLevel(match.factor_relevance.level),
+      interpretation: match.factor_relevance.interpretation,
+      disclaimer: factorRelevanceGuide?.disclaimer,
+      tooltip: buildScoreGuideTooltip(factorRelevanceGuide),
+    })
+  }
+
+  return items
 }
 
 function getDominantRelationship(counts) {
@@ -735,6 +872,83 @@ function buildReadableComparisonSummary(matches, backendSummary) {
   return `${matches.length} paragraph pair${
     matches.length === 1 ? '' : 's'
   } found. The visible evidence is mostly ${dominantLabel}, with ${remaining} also shown.`
+}
+
+function getSortingOptions(comparison) {
+  const options = comparison?.sorting?.options
+  return Array.isArray(options) ? options : []
+}
+
+function getDefaultSortKey(comparison) {
+  return comparison?.sorting?.default ?? getSortingOptions(comparison)[0]?.key ?? ''
+}
+
+function getValueAtPath(source, path) {
+  if (!path) {
+    return null
+  }
+
+  return path.split('.').reduce((current, key) => current?.[key], source)
+}
+
+function compareNullableNumbers(valueA, valueB, direction = 'descending') {
+  const numberA = Number(valueA)
+  const numberB = Number(valueB)
+  const hasA = Number.isFinite(numberA)
+  const hasB = Number.isFinite(numberB)
+
+  if (!hasA && !hasB) {
+    return 0
+  }
+
+  if (!hasA) {
+    return 1
+  }
+
+  if (!hasB) {
+    return -1
+  }
+
+  return direction === 'ascending' ? numberA - numberB : numberB - numberA
+}
+
+function sortMatchesByBackendOption(matches, sortingOption) {
+  if (!sortingOption) {
+    return matches
+  }
+
+  const primaryPath =
+    sortingOption.score_path ?? sortingOption.path ?? sortingOption.primary_path
+  const secondaryPath =
+    sortingOption.secondary_score_path ??
+    sortingOption.secondary_path ??
+    sortingOption.tie_breaker_path
+  const direction = sortingOption.direction ?? 'descending'
+  const secondaryDirection = sortingOption.secondary_direction ?? direction
+
+  return [...matches].sort((matchA, matchB) => {
+    const primaryComparison = compareNullableNumbers(
+      getValueAtPath(matchA, primaryPath),
+      getValueAtPath(matchB, primaryPath),
+      direction,
+    )
+
+    if (primaryComparison !== 0) {
+      return primaryComparison
+    }
+
+    const secondaryComparison = compareNullableNumbers(
+      getValueAtPath(matchA, secondaryPath),
+      getValueAtPath(matchB, secondaryPath),
+      secondaryDirection,
+    )
+
+    if (secondaryComparison !== 0) {
+      return secondaryComparison
+    }
+
+    return (matchA.pairNumber ?? 0) - (matchB.pairNumber ?? 0)
+  })
 }
 
 function getFriendlyError(error) {
@@ -955,8 +1169,8 @@ function PdfToolbox({ file, pdfInfo, wordStatus, onConvertWord, isLoading }) {
     pdfInfo == null
       ? null
       : isImagePdf
-        ? 'Scanned / image PDF detected — OCR will be used.'
-        : 'Text PDF detected — text can be read directly.'
+        ? 'Scanned / image PDF detected - OCR will be used.'
+        : 'Text PDF detected - text can be read directly.'
 
   return (
     <div className="pdf-toolbox">
@@ -1095,7 +1309,7 @@ function ArticleSourceField({
             )}
           </div>
           <p className="input-hint">
-            {text.trim().length} characters. Paste the article body directly —
+            {text.trim().length} characters. Paste the article body directly -
             no link needed.
           </p>
         </>
@@ -1412,24 +1626,62 @@ function ComparisonControls({
   )
 }
 
+function SortingControl({ options, selectedSort, onSelectSort }) {
+  if (options.length === 0) {
+    return null
+  }
+
+  return (
+    <label className="sorting-control">
+      <span>Sort by</span>
+      <select
+        value={selectedSort}
+        onChange={(event) => onSelectSort(event.target.value)}
+      >
+        {options.map((option) => (
+          <option key={option.key} value={option.key}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 function ComparisonSummaryCard({ matches, backendSummary }) {
   if (matches.length === 0 && !backendSummary) {
     return null
   }
 
   const counts = getMatchCounts(matches)
-  const averageScore = getAverageMatchScore(matches)
   const summaryText = buildReadableComparisonSummary(matches, backendSummary)
   const stats = [
-    { label: 'Matched pairs', value: matches.length },
-    { label: 'Aligned', value: counts.aligned },
-    { label: 'Partially aligned', value: counts.partially_aligned },
-    { label: 'Divergent', value: counts.divergent },
+    { label: 'Matched pairs', value: backendSummary?.match_count ?? matches.length },
+    { label: 'Aligned', value: backendSummary?.aligned_count ?? counts.aligned },
     {
-      label: 'Average score',
-      value: averageScore == null ? 'N/A' : `${Math.round(averageScore * 100)}%`,
+      label: 'Partially aligned',
+      value: backendSummary?.partially_aligned_count ?? counts.partially_aligned,
+    },
+    { label: 'Divergent', value: backendSummary?.divergent_count ?? counts.divergent },
+    {
+      label: 'Avg match strength',
+      value: formatSummaryScore(backendSummary, 'average_match_strength'),
     },
   ]
+
+  if (backendSummary?.average_factor_relevance != null) {
+    stats.push({
+      label: 'Avg factor relevance',
+      value: formatSummaryScore(backendSummary, 'average_factor_relevance'),
+    })
+  }
+
+  if (backendSummary?.average_stance_discrepancy != null) {
+    stats.push({
+      label: 'Avg stance discrepancy',
+      value: formatSummaryScore(backendSummary, 'average_stance_discrepancy'),
+    })
+  }
 
   return (
     <section className="comparison-summary" aria-label="Comparison summary">
@@ -1455,6 +1707,7 @@ function MatchExplanationPanel({
   matches,
   articleA,
   articleB,
+  scoreGuides,
   onSelectMatch,
   onClose,
 }) {
@@ -1482,11 +1735,9 @@ function MatchExplanationPanel({
             )?.label
           }
         </span>
-        {typeof selectedMatch.score === 'number' && (
-          <span className="match-score">
-            Score {Math.round(selectedMatch.score * 100)}%
-          </span>
-        )}
+        <span className="match-score">
+          Match {formatPublicScore(selectedMatch, 'match_strength')}
+        </span>
         <button
           className="explanation-panel__close"
           type="button"
@@ -1498,6 +1749,20 @@ function MatchExplanationPanel({
       </div>
 
       <p>{selectedMatch.explanation}</p>
+
+      <dl className="score-breakdown" aria-label="Score breakdown">
+        {getScoreDetailItems(selectedMatch, scoreGuides).map((item) => (
+          <div key={item.key} title={item.tooltip}>
+            <dt>{item.label}</dt>
+            <dd>
+              {item.value}
+              {item.level && <span>{item.level}</span>}
+            </dd>
+            {item.interpretation && <p>{item.interpretation}</p>}
+            {item.disclaimer && <small>{item.disclaimer}</small>}
+          </div>
+        ))}
+      </dl>
 
       <div className="match-nav">
         <button
@@ -1546,7 +1811,6 @@ function HistoryPanel({
   onRestore,
   onDelete,
   onClear,
-  currentUser,
 }) {
   if (!isOpen) {
     return null
@@ -1556,8 +1820,8 @@ function HistoryPanel({
     <section className="history-panel" aria-label="Comparison history">
       <div className="history-panel__header">
         <div>
-          <p className="eyebrow">{currentUser ? 'Account history' : 'Browser history'}</p>
-          <h2>{currentUser ? 'Saved comparisons' : 'Recent comparisons'}</h2>
+          <p className="eyebrow">Account history</p>
+          <h2>Saved comparisons</h2>
         </div>
         <button type="button" onClick={onClose}>
           Close
@@ -1590,9 +1854,7 @@ function HistoryPanel({
         </>
       ) : (
         <p className="history-empty">
-          {currentUser
-            ? 'Saved comparisons will appear here after a successful run.'
-            : 'Your recent comparisons will appear here after a successful run.'}
+          Saved comparisons will appear here after a successful run.
         </p>
       )}
     </section>
@@ -1749,9 +2011,6 @@ function SaveOptionsModal({
           <button className="compare-button" type="button" onClick={onDownloadHtml}>
             Download HTML report
           </button>
-          <button className="header-pill-button" type="button" disabled>
-            PDF coming soon
-          </button>
         </div>
       </section>
     </div>
@@ -1781,10 +2040,11 @@ function App() {
   const [comparisonId, setComparisonId] = useState(null)
   const [visibleLabels, setVisibleLabels] = useState(getInitialFilters)
   const [selectedMatchId, setSelectedMatchId] = useState(null)
+  const [selectedSort, setSelectedSort] = useState('')
   const [activeMobileArticle, setActiveMobileArticle] = useState('A')
   const [demoSamples, setDemoSamples] = useState([])
   const [demoLoadError, setDemoLoadError] = useState('')
-  const [historyItems, setHistoryItems] = useState(loadComparisonHistory)
+  const [historyItems, setHistoryItems] = useState([])
   const [isHistoryOpen, setIsHistoryOpen] = useState(false)
   const [isSaveOptionsOpen, setIsSaveOptionsOpen] = useState(false)
   const [authSession, setAuthSession] = useState(loadAuthSession)
@@ -1822,7 +2082,7 @@ function App() {
 
   async function refreshAccountHistory(token = authToken) {
     if (!token) {
-      setHistoryItems(loadComparisonHistory())
+      setHistoryItems([])
       return
     }
 
@@ -1842,7 +2102,7 @@ function App() {
 
     async function loadAccountData() {
       if (!authToken) {
-        setHistoryItems(loadComparisonHistory())
+        setHistoryItems([])
         return
       }
 
@@ -1866,7 +2126,7 @@ function App() {
         }
         saveAuthSession(null)
         setAuthSession(null)
-        setHistoryItems(loadComparisonHistory())
+        setHistoryItems([])
       }
     }
 
@@ -1991,8 +2251,6 @@ function App() {
     setWordStatusB(null)
 
     try {
-      setFocus(sample.focus)
-
       if (sample.kind === 'url') {
         setArticleAMode('url')
         setArticleBMode('url')
@@ -2358,6 +2616,7 @@ function App() {
       setComparison(null)
       setComparisonId(null)
       setSelectedMatchId(null)
+      setSelectedSort('')
       setActiveMobileArticle('A')
       setApiErrors([])
       setProgress(null)
@@ -2370,6 +2629,7 @@ function App() {
     setComparison(null)
     setComparisonId(null)
     setSelectedMatchId(null)
+    setSelectedSort('')
     setActiveMobileArticle('A')
     setApiErrors([])
     setProgress({
@@ -2406,6 +2666,7 @@ function App() {
       setComparison(backendComparison)
       setComparisonId(data.comparison_id ?? null)
       setSelectedMatchId(null)
+      setSelectedSort(getDefaultSortKey(backendComparison))
       setActiveMobileArticle('A')
       setProgress({
         percent: 100,
@@ -2417,20 +2678,6 @@ function App() {
         if (hasBackendMatches) {
           if (authToken) {
             await refreshAccountHistory(authToken)
-          } else {
-            const historyItem = buildHistoryItem({
-              focus: data.focus ?? focus,
-              articles: returnedArticles,
-              comparison: backendComparison,
-            })
-            setHistoryItems((currentItems) => {
-              const nextItems = [
-                historyItem,
-                ...currentItems.filter((item) => item.id !== historyItem.id),
-              ].slice(0, maxHistoryItems)
-              saveComparisonHistory(nextItems)
-              return nextItems
-            })
           }
           setStatusMessage(
             `Live comparison result loaded with the "${getFocusLabel(data.focus)}" focus.`,
@@ -2456,6 +2703,7 @@ function App() {
       setComparison(null)
       setComparisonId(null)
       setSelectedMatchId(null)
+      setSelectedSort('')
       setActiveMobileArticle('A')
       setApiErrors([])
       setProgress(null)
@@ -2468,8 +2716,17 @@ function App() {
   const articleA = articles.find((article) => article.article_ref === 'A')
   const articleB = articles.find((article) => article.article_ref === 'B')
   const comparisonMatches = getComparisonMatches(comparison)
+  const sortingOptions = getSortingOptions(comparison)
+  const activeSortingOption =
+    sortingOptions.find((option) => option.key === selectedSort) ??
+    sortingOptions.find((option) => option.key === getDefaultSortKey(comparison)) ??
+    null
+  const sortedComparisonMatches = sortMatchesByBackendOption(
+    comparisonMatches,
+    activeSortingOption,
+  )
   const selectedMatch =
-    comparisonMatches.find((match) => match.id === selectedMatchId) ?? null
+    sortedComparisonMatches.find((match) => match.id === selectedMatchId) ?? null
   const readinessMessage = getCompareReadinessMessage(canCompare, isLoading)
   const demoGroups = [
     {
@@ -2513,12 +2770,28 @@ function App() {
     setSelectedMatchId(matchId)
   }
 
+  function handleSelectSort(nextSort) {
+    setSelectedSort(nextSort)
+    const nextSortingOption =
+      sortingOptions.find((option) => option.key === nextSort) ?? null
+    const nextMatches = sortMatchesByBackendOption(
+      comparisonMatches,
+      nextSortingOption,
+    )
+    setSelectedMatchId(nextMatches[0]?.id ?? null)
+
+    if (nextMatches.length > 0) {
+      window.requestAnimationFrame(scrollToResults)
+    }
+  }
+
   function handleRestoreHistory(item) {
     setArticles(item.articles ?? [])
     setComparison(item.comparison ?? null)
     setComparisonId(item.comparison_id ?? null)
     setFocus(item.focus ?? 'general')
     setSelectedMatchId(null)
+    setSelectedSort(getDefaultSortKey(item.comparison))
     setActiveMobileArticle('A')
     setVisibleLabels(getInitialFilters())
     setApiErrors([])
@@ -2528,44 +2801,37 @@ function App() {
   }
 
   async function handleClearHistory() {
-    if (authToken) {
-      try {
-        await fetch('/api/history', {
-          method: 'DELETE',
-          headers: authHeaders(authToken),
-        }).then(parseJsonResponse)
-        setHistoryItems([])
-        setStatusMessage('Account history cleared.')
-      } catch (error) {
-        setStatusMessage(`Could not clear account history. ${error.message}`)
-      }
+    if (!authToken) {
       return
     }
 
-    saveComparisonHistory([])
-    setHistoryItems([])
+    try {
+      await fetch('/api/history', {
+        method: 'DELETE',
+        headers: authHeaders(authToken),
+      }).then(parseJsonResponse)
+      setHistoryItems([])
+      setStatusMessage('Account history cleared.')
+    } catch (error) {
+      setStatusMessage(`Could not clear account history. ${error.message}`)
+    }
   }
 
   async function handleDeleteHistoryItem(itemId) {
-    if (authToken) {
-      try {
-        await fetch(`/api/history/${itemId}`, {
-          method: 'DELETE',
-          headers: authHeaders(authToken),
-        }).then(parseJsonResponse)
-        await refreshAccountHistory(authToken)
-        setStatusMessage('Saved comparison removed from account history.')
-      } catch (error) {
-        setStatusMessage(`Could not delete account history item. ${error.message}`)
-      }
+    if (!authToken) {
       return
     }
 
-    setHistoryItems((currentItems) => {
-      const nextItems = currentItems.filter((item) => item.id !== itemId)
-      saveComparisonHistory(nextItems)
-      return nextItems
-    })
+    try {
+      await fetch(`/api/history/${itemId}`, {
+        method: 'DELETE',
+        headers: authHeaders(authToken),
+      }).then(parseJsonResponse)
+      await refreshAccountHistory(authToken)
+      setStatusMessage('Saved comparison removed from account history.')
+    } catch (error) {
+      setStatusMessage(`Could not delete account history item. ${error.message}`)
+    }
   }
 
   async function handleAuthSubmit(event) {
@@ -2576,15 +2842,14 @@ function App() {
     const password = authForm.password
 
     if (!username) {
-    setAuthError('Enter a username.')
-    return
-  }
+      setAuthError('Enter a username.')
+      return
+    }
 
-  if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
-    setAuthError('Username must be 3–20 characters, letters/numbers/underscore only.')
-    return
-  }
-
+    if (!isValidUsername(username)) {
+      setAuthError('Username must be 3-20 characters, letters/numbers/underscore only.')
+      return
+    }
 
     if (!password) {
       setAuthError('Enter your password.')
@@ -2643,8 +2908,9 @@ function App() {
     saveAuthSession(null)
     setAuthSession(null)
     resetComparisonWorkspace()
-    setHistoryItems(loadComparisonHistory())
-    setStatusMessage('Logged out. Browser history is shown locally.')
+    setHistoryItems([])
+    setIsHistoryOpen(false)
+    setStatusMessage('Logged out.')
   }
 
   function scrollToTop() {
@@ -2659,7 +2925,7 @@ function App() {
   }
 
   async function handleCopySummary() {
-    if (!comparisonMatches.length) {
+    if (!sortedComparisonMatches.length) {
       return
     }
 
@@ -2667,7 +2933,7 @@ function App() {
       focus,
       articleA,
       articleB,
-      matches: comparisonMatches,
+      matches: sortedComparisonMatches,
       selectedMatch,
     })
     await copyTextToClipboard(summary)
@@ -2714,7 +2980,7 @@ function App() {
     }
 
     const savedAt = new Date().toISOString()
-    const enrichedMatches = comparisonMatches.map((match) => ({
+    const enrichedMatches = sortedComparisonMatches.map((match) => ({
       ...match,
       articleAText: getMatchedText(articleA, match, 'A'),
       articleBText: getMatchedText(articleB, match, 'B'),
@@ -2724,7 +2990,9 @@ function App() {
       articleA,
       articleB,
       matches: enrichedMatches,
-      counts: getMatchCounts(comparisonMatches),
+      counts: getMatchCounts(sortedComparisonMatches),
+      summary: comparison?.summary,
+      scoreGuides: comparison?.score_guides,
       generatedAt: savedAt,
     })
     const datePart = savedAt.slice(0, 10)
@@ -2754,16 +3022,16 @@ function App() {
           <span>Narrative Diff</span>
         </a>
         <div className="header-actions">
-          <button
-            className="history-button"
-            type="button"
-            onClick={() => setIsHistoryOpen((isOpen) => !isOpen)}
-          >
-            History
-            {historyItems.length > 0 && <span>{historyItems.length}</span>}
-          </button>
           {currentUser ? (
             <>
+              <button
+                className="history-button"
+                type="button"
+                onClick={() => setIsHistoryOpen((isOpen) => !isOpen)}
+              >
+                History
+                {historyItems.length > 0 && <span>{historyItems.length}</span>}
+              </button>
               <span className="user-pill">
                 {currentUser.display_name || currentUser.username}
               </span>
@@ -2840,7 +3108,7 @@ function App() {
             <p>
               You can enter article URLs, paste text directly, or upload
               supported documents. The highlighted results include matched
-              paragraph pairs, relationship labels, confidence scores, and
+              paragraph pairs, relationship labels, 0-20 scores, and
               explanations from the backend comparison pipeline.
             </p>
             <p>
@@ -2874,15 +3142,16 @@ function App() {
       />
 
       <main>
-        <HistoryPanel
-          historyItems={historyItems}
-          isOpen={isHistoryOpen}
-          onClose={() => setIsHistoryOpen(false)}
-          onRestore={handleRestoreHistory}
-          onDelete={handleDeleteHistoryItem}
-          onClear={handleClearHistory}
-          currentUser={currentUser}
-        />
+        {currentUser && (
+          <HistoryPanel
+            historyItems={historyItems}
+            isOpen={isHistoryOpen}
+            onClose={() => setIsHistoryOpen(false)}
+            onRestore={handleRestoreHistory}
+            onDelete={handleDeleteHistoryItem}
+            onClear={handleClearHistory}
+          />
+        )}
 
         <section className="hero-section">
           <p className="eyebrow">Compare reporting. See the difference.</p>
@@ -3061,7 +3330,7 @@ function App() {
                   className="save-results-button"
                   type="button"
                   onClick={handleCopySummary}
-                  disabled={!comparisonMatches.length}
+                  disabled={!sortedComparisonMatches.length}
                 >
                   Copy summary
                 </button>
@@ -3070,15 +3339,21 @@ function App() {
           </div>
 
           <ComparisonSummaryCard
-            matches={comparisonMatches}
+            matches={sortedComparisonMatches}
             backendSummary={comparison?.summary}
           />
 
           <ComparisonControls
-            matches={comparisonMatches}
+            matches={sortedComparisonMatches}
             visibleLabels={visibleLabels}
             onToggleLabel={handleToggleLabel}
             onResetFilters={handleResetFilters}
+          />
+
+          <SortingControl
+            options={sortingOptions}
+            selectedSort={selectedSort}
+            onSelectSort={handleSelectSort}
           />
 
           <div className="mobile-article-tabs" aria-label="Article view">
@@ -3098,7 +3373,7 @@ function App() {
             ))}
           </div>
 
-          {!selectedMatch && comparisonMatches.length > 0 && (
+          {!selectedMatch && sortedComparisonMatches.length > 0 && (
             <p className="match-selection-hint">
               Tip: click any highlighted paragraph pair to open its evidence panel.
             </p>
@@ -3124,7 +3399,7 @@ function App() {
                   error={getErrorForArticle(apiErrors, 'A')}
                   label="Article A"
                   side="A"
-                  matches={comparisonMatches}
+                  matches={sortedComparisonMatches}
                   visibleLabels={visibleLabels}
                   selectedMatchId={selectedMatchId}
                   onSelectMatch={handleSelectMatch}
@@ -3142,7 +3417,7 @@ function App() {
                   error={getErrorForArticle(apiErrors, 'B')}
                   label="Article B"
                   side="B"
-                  matches={comparisonMatches}
+                  matches={sortedComparisonMatches}
                   visibleLabels={visibleLabels}
                   selectedMatchId={selectedMatchId}
                   onSelectMatch={handleSelectMatch}
@@ -3153,9 +3428,10 @@ function App() {
             <div className="sticky-explanation-slot">
               <MatchExplanationPanel
                 selectedMatch={selectedMatch}
-                matches={comparisonMatches}
+                matches={sortedComparisonMatches}
                 articleA={articleA}
                 articleB={articleB}
+                scoreGuides={comparison?.score_guides}
                 onSelectMatch={handleSelectMatch}
                 onClose={() => setSelectedMatchId(null)}
               />
@@ -3177,7 +3453,7 @@ function App() {
           aria-label="Back to top"
           title="Back to top"
         >
-          <span aria-hidden="true">↑</span>
+          <span aria-hidden="true">&uarr;</span>
         </button>
       )}
     </div>
@@ -3185,3 +3461,4 @@ function App() {
 }
 
 export default App
+

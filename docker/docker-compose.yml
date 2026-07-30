@@ -19,6 +19,23 @@ services:
       timeout: 5s
       retries: 5
 
+  db-init:
+    image: postgres:17
+    container_name: narrative-diff-db-init
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ../database/database/init_db.sql:/init_db.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      [
+        "sh",
+        "-c",
+        "psql -h postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -f /init_db.sql",
+      ]
+
   backend:
     build:
       context: ..
@@ -32,8 +49,22 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+
+  admin-backend:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    container_name: narrative-diff-admin-backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/postgres
+    command: ["uvicorn", "admin_server:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
 
   frontend:
     build:

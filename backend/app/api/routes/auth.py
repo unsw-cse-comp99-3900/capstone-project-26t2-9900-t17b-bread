@@ -54,7 +54,7 @@ class AuthRequest(BaseModel):
     def _validate_username(cls, value: str) -> str:
         username = value.strip()
         if not USERNAME_RE.match(username):
-            raise ValueError("Username must be 3–20 chars, letters/numbers/underscore only.")
+            raise ValueError("Username must be 3-20 chars, letters/numbers/underscore only.")
         return username
 
 
