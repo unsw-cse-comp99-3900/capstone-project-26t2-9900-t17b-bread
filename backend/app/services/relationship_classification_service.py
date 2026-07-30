@@ -7,44 +7,19 @@ from typing import Any
 
 
 # ---------------------------------------------------------------------------
-# Relatedness thresholds
-# ---------------------------------------------------------------------------
-
-# Keep these thresholds consistent with CrossMappingService.
-# A pair that has already passed cross mapping should not be rejected again
-# merely because contradictory wording lowers cosine similarity.
-MIN_RELATED_MAPPING_SCORE = 0.42
-MIN_RELATED_BASE_HYBRID_SCORE = 0.38
-MIN_RELATED_COSINE_SCORE = 0.30
-MIN_RELATED_BM25_SCORE = 0.12
-
-
-# ---------------------------------------------------------------------------
 # Divergence thresholds
 # ---------------------------------------------------------------------------
 
-# Divergent pairs may have lower cosine similarity because their predicates
-# express opposing meanings, while still sharing the same subject and event.
-MIN_DIVERGENT_MAPPING_SCORE = 0.42
-MIN_DIVERGENT_COSINE_SCORE = 0.30
-
-# Contradiction must be the dominant bidirectional NLI result.
+# For normal final mappings, contradiction must be the dominant bidirectional
+# NLI result. Contradiction-rescue mappings have already passed stricter
+# thresholds in FinalCrossMappingService and are classified as divergent
+# directly.
 MIN_CONTRADICTION_SCORE = 0.52
 MIN_CONTRADICTION_MARGIN = 0.03
 
-# Very strong contradiction can pass with only a small positive margin.
+# Very strong contradiction can pass with a smaller positive margin.
 VERY_STRONG_CONTRADICTION_SCORE = 0.68
-
-# Explicit factual conflicts such as:
-#
-#   "12 people were killed"
-#   versus
-#   "no one was killed"
-#
-# can pass with a lower general NLI threshold because a deterministic textual
-# conflict has already been detected.
-MIN_EXPLICIT_CONFLICT_SCORE = 0.55
-MIN_EXPLICIT_CONFLICT_MARGIN = 0.05
+VERY_STRONG_CONTRADICTION_MARGIN = 0.02
 
 
 # ---------------------------------------------------------------------------
@@ -66,48 +41,57 @@ MIN_ALIGNED_BM25_SCORE = 0.16
 MIN_ALIGNED_ENTAILMENT_SCORE = 0.45
 MAX_ALIGNED_CONTRADICTION_SCORE = 0.45
 
-# Very high similarity may still support alignment when one paragraph contains
-# additional detail and NLI returns neutral.
+# Very high similarity may support alignment when one paragraph contains
+# additional detail and bidirectional NLI returns neutral.
 VERY_STRONG_MAPPING_SCORE = 0.76
 VERY_STRONG_COSINE_SCORE = 0.68
 
 
 class RelationshipClassificationService:
     """
-    Classify final cross-article paragraph-chunk mappings.
+    Classify accepted final one-to-one cross-article mappings.
 
     This service runs after:
 
-        1. cosine similarity
-        2. BM25 scoring
-        3. hybrid scoring
-        4. cross mapping
-        5. contradiction/NLI analysis
+        1. cosine similarity;
+        2. BM25 similarity;
+        3. base hybrid scoring;
+        4. candidate cross mapping;
+        5. bidirectional contradiction/NLI detection;
+        6. final cross mapping with strict one-to-one selection.
 
-    Public labels:
+    Every input pair has already been accepted by FinalCrossMappingService
+    through either:
 
-        - aligned
-        - partially_aligned
-        - divergent
+        - normal_mapping; or
+        - contradiction_rescue.
 
-    Internally unrelated mappings are discarded from the final output.
+    This service only assigns one public relationship label:
 
-    Classification uses semantic/lexical relatedness together with
-    bidirectional NLI. Numeric differences and scope heuristics are ignored.
+        - aligned;
+        - partially_aligned;
+        - divergent.
+
+    It does not reject mappings, does not produce an unrelated label, and
+    neither calculates, uses, nor propagates factor/focus-scaling data.
     """
 
     def classify_mappings(
         self,
-        cross_mappings: list[dict[str, Any]],
+        final_mappings: list[dict[str, Any]],
         *,
         chunks_a: list[dict[str, Any]] | None = None,
         chunks_b: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Classify every cross mapping and return visible relationships only.
+        Classify every accepted final mapping.
+
+        Input order is preserved. FinalCrossMappingService is responsible for
+        acceptance and strict one-to-one selection; this method does not perform
+        another relevance filter.
         """
 
-        if not cross_mappings:
+        if not final_mappings:
             return []
 
         text_lookup = self._build_text_lookup(
@@ -117,7 +101,12 @@ class RelationshipClassificationService:
 
         relationships: list[dict[str, Any]] = []
 
-        for mapping in cross_mappings:
+        for pair_number, mapping in enumerate(
+            final_mappings,
+            start=1,
+        ):
+            self._validate_final_mapping(mapping)
+
             label, reason_code = self._classify_single_mapping(
                 mapping
             )
@@ -131,14 +120,24 @@ class RelationshipClassificationService:
             a_chunk_id = mapping.get("a_chunk_id")
             b_chunk_id = mapping.get("b_chunk_id")
 
+            base_hybrid_score = self._get_base_hybrid_score(
+                mapping
+            )
+            mapping_score = self._get_mapping_score(
+                mapping
+            )
             relationship = {
-                "pair_number": None,
+                "pair_number": pair_number,
 
                 "a_chunk_id": a_chunk_id,
                 "b_chunk_id": b_chunk_id,
 
-                "a_chunk_index": mapping.get("a_chunk_index"),
-                "b_chunk_index": mapping.get("b_chunk_index"),
+                "a_chunk_index": mapping.get(
+                    "a_chunk_index"
+                ),
+                "b_chunk_index": mapping.get(
+                    "b_chunk_index"
+                ),
 
                 "a_paragraph_index": mapping.get(
                     "a_paragraph_index"
@@ -147,12 +146,56 @@ class RelationshipClassificationService:
                     "b_paragraph_index"
                 ),
 
-                "a_article_ref": mapping.get("a_article_ref"),
-                "b_article_ref": mapping.get("b_article_ref"),
+                "a_article_ref": mapping.get(
+                    "a_article_ref"
+                ),
+                "b_article_ref": mapping.get(
+                    "b_article_ref"
+                ),
 
                 "label": label,
                 "confidence": confidence,
                 "reason_code": reason_code,
+
+                # Final mapping provenance.
+                "normal_mapping": bool(
+                    mapping.get("normal_mapping", False)
+                ),
+                "contradiction_rescue": bool(
+                    mapping.get(
+                        "contradiction_rescue",
+                        False,
+                    )
+                ),
+                "final_mapping_reason": mapping.get(
+                    "final_mapping_reason"
+                ),
+                "final_mapping_accepted": bool(
+                    mapping.get(
+                        "final_mapping_accepted",
+                        True,
+                    )
+                ),
+                "final_selection_rank": mapping.get(
+                    "final_selection_rank"
+                ),
+
+                # Candidate provenance.
+                "candidate_reason": mapping.get(
+                    "candidate_reason"
+                ),
+                "ordinary_candidate": bool(
+                    mapping.get(
+                        "ordinary_candidate",
+                        False,
+                    )
+                ),
+                "strong_signal_candidate": bool(
+                    mapping.get(
+                        "strong_signal_candidate",
+                        False,
+                    )
+                ),
 
                 # Similarity and mapping evidence.
                 "cosine_score": self._safe_float(
@@ -161,43 +204,47 @@ class RelationshipClassificationService:
                 "bm25_score": self._safe_float(
                     mapping.get("bm25_score")
                 ),
-                "base_hybrid_score": self._get_base_hybrid_score(
-                    mapping
+                "bm25_raw_score": self._safe_float(
+                    mapping.get("bm25_raw_score")
                 ),
-                "hybrid_score": self._safe_float(
-                    mapping.get("hybrid_score")
-                ),
-                "mapping_score": self._get_mapping_score(
-                    mapping
-                ),
+                "base_hybrid_score": base_hybrid_score,
+
+                "mapping_score": mapping_score,
                 "context_support": self._safe_float(
                     mapping.get("context_support")
                 ),
-
-                "focus": mapping.get("focus", "general"),
-                "pair_focus_relevance": self._safe_float(
-                    mapping.get("pair_focus_relevance")
+                "context_boost": self._safe_float(
+                    mapping.get("context_boost")
                 ),
 
-                # Combined NLI evidence.
-                "nli_evaluated": bool(
-                    mapping.get("nli_evaluated", False)
-                ),
+                # Combined bidirectional NLI evidence.
+                "nli_evaluated": True,
                 "nli_label": mapping.get(
                     "nli_label",
                     "not_evaluated",
                 ),
-                "entailment_score": self._safe_float(
-                    mapping.get("entailment_score")
+                "entailment_score": (
+                    self._get_required_bounded_score(
+                        mapping,
+                        "entailment_score",
+                    )
                 ),
-                "neutral_score": self._safe_float(
-                    mapping.get("neutral_score")
+                "neutral_score": (
+                    self._get_required_bounded_score(
+                        mapping,
+                        "neutral_score",
+                    )
                 ),
-                "contradiction_score": self._safe_float(
-                    mapping.get("contradiction_score")
+                "contradiction_score": (
+                    self._get_required_bounded_score(
+                        mapping,
+                        "contradiction_score",
+                    )
                 ),
-                "contradiction_margin": self._get_contradiction_margin(
-                    mapping
+                "contradiction_margin": (
+                    self._get_contradiction_margin(
+                        mapping
+                    )
                 ),
                 "contradiction_is_dominant": bool(
                     mapping.get(
@@ -207,124 +254,80 @@ class RelationshipClassificationService:
                 ),
 
                 # Directional NLI evidence.
-                "forward_entailment_score": self._safe_float(
-                    mapping.get("forward_entailment_score")
-                ),
-                "forward_neutral_score": self._safe_float(
-                    mapping.get("forward_neutral_score")
-                ),
-                "forward_contradiction_score": self._safe_float(
-                    mapping.get("forward_contradiction_score")
-                ),
-                "reverse_entailment_score": self._safe_float(
-                    mapping.get("reverse_entailment_score")
-                ),
-                "reverse_neutral_score": self._safe_float(
-                    mapping.get("reverse_neutral_score")
-                ),
-                "reverse_contradiction_score": self._safe_float(
-                    mapping.get("reverse_contradiction_score")
-                ),
-
-                # Scope and numeric evidence generated by the contradiction
-                # detection service.
-                "scope_mismatch": bool(
-                    mapping.get("scope_mismatch", False)
-                ),
-                "has_numeric_difference": bool(
-                    mapping.get(
-                        "has_numeric_difference",
-                        False,
+                "forward_entailment_score": (
+                    self._safe_float(
+                        mapping.get(
+                            "forward_entailment_score"
+                        )
                     )
                 ),
-                "casualty_numeric_difference": bool(
-                    mapping.get(
-                        "casualty_numeric_difference",
-                        False,
+                "forward_neutral_score": (
+                    self._safe_float(
+                        mapping.get(
+                            "forward_neutral_score"
+                        )
                     )
                 ),
-                "explicit_casualty_conflict": bool(
-                    mapping.get(
-                        "explicit_casualty_conflict",
-                        False,
+                "forward_contradiction_score": (
+                    self._safe_float(
+                        mapping.get(
+                            "forward_contradiction_score"
+                        )
                     )
                 ),
-
-                "a_numbers": list(
-                    mapping.get("a_numbers") or []
-                ),
-                "b_numbers": list(
-                    mapping.get("b_numbers") or []
-                ),
-
-                "a_zero_casualty_claim": bool(
-                    mapping.get(
-                        "a_zero_casualty_claim",
-                        False,
+                "reverse_entailment_score": (
+                    self._safe_float(
+                        mapping.get(
+                            "reverse_entailment_score"
+                        )
                     )
                 ),
-                "b_zero_casualty_claim": bool(
-                    mapping.get(
-                        "b_zero_casualty_claim",
-                        False,
+                "reverse_neutral_score": (
+                    self._safe_float(
+                        mapping.get(
+                            "reverse_neutral_score"
+                        )
                     )
                 ),
-                "a_positive_casualty_claim": bool(
-                    mapping.get(
-                        "a_positive_casualty_claim",
-                        False,
-                    )
-                ),
-                "b_positive_casualty_claim": bool(
-                    mapping.get(
-                        "b_positive_casualty_claim",
-                        False,
+                "reverse_contradiction_score": (
+                    self._safe_float(
+                        mapping.get(
+                            "reverse_contradiction_score"
+                        )
                     )
                 ),
 
                 "a_text_preview": self._preview(
-                    text_lookup.get(str(a_chunk_id), "")
+                    text_lookup.get(
+                        str(a_chunk_id),
+                        "",
+                    )
                 ),
                 "b_text_preview": self._preview(
-                    text_lookup.get(str(b_chunk_id), "")
+                    text_lookup.get(
+                        str(b_chunk_id),
+                        "",
+                    )
                 ),
             }
 
             relationships.append(relationship)
 
-        visible_relationships = [
-            relationship
-            for relationship in relationships
-            if relationship["label"] in {
-                "aligned",
-                "partially_aligned",
-                "divergent",
-            }
-        ]
-
-        for pair_number, relationship in enumerate(
-            visible_relationships,
-            start=1,
-        ):
-            relationship["pair_number"] = pair_number
-
-        return visible_relationships
+        return relationships
 
     def _classify_single_mapping(
         self,
         mapping: dict[str, Any],
     ) -> tuple[str, str]:
         """
-        Return the relationship label and reason code.
+        Classify one already accepted final mapping.
 
         Decision order:
 
-            1. unrelated when shared content is insufficient;
-            2. divergent when bidirectional NLI shows a dominant contradiction;
-            3. aligned when similarity is strong and contradiction does not block;
-            4. partially_aligned for the remaining related mappings.
-
-        Numeric differences and scope heuristics do not affect classification.
+            1. contradiction rescue -> divergent;
+            2. other strong bidirectional contradiction -> divergent;
+            3. strong similarity with compatible NLI -> aligned;
+            4. every remaining accepted final mapping -> partially_aligned.
         """
 
         cosine_score = self._safe_float(
@@ -340,60 +343,70 @@ class RelationshipClassificationService:
             mapping
         )
 
-        nli_evaluated = bool(
-            mapping.get("nli_evaluated", False)
+        entailment_score = self._get_required_bounded_score(
+            mapping,
+            "entailment_score",
         )
-        entailment_score = self._safe_float(
-            mapping.get("entailment_score")
+        neutral_score = self._get_required_bounded_score(
+            mapping,
+            "neutral_score",
         )
-        neutral_score = self._safe_float(
-            mapping.get("neutral_score")
+        contradiction_score = (
+            self._get_required_bounded_score(
+                mapping,
+                "contradiction_score",
+            )
         )
-        contradiction_score = self._safe_float(
-            mapping.get("contradiction_score")
+        contradiction_margin = (
+            self._get_contradiction_margin(
+                mapping
+            )
         )
-        contradiction_margin = self._get_contradiction_margin(
-            mapping
-        )
+
         contradiction_is_dominant = bool(
             mapping.get(
                 "contradiction_is_dominant",
                 contradiction_score
-                > max(entailment_score, neutral_score),
+                > max(
+                    entailment_score,
+                    neutral_score,
+                ),
             )
         )
 
-        if not self._is_related_pair(
-            cosine_score=cosine_score,
-            bm25_score=bm25_score,
-            base_hybrid_score=base_hybrid_score,
-            mapping_score=mapping_score,
-        ):
-            return (
-                "unrelated",
-                "insufficient_shared_content",
+        # FinalCrossMappingService has already validated the stricter rescue
+        # conditions. Do not re-apply a mapping-score or cosine-score gate.
+        if bool(
+            mapping.get(
+                "contradiction_rescue",
+                False,
             )
-
-        if self._has_strong_contradiction(
-            nli_evaluated=nli_evaluated,
-            contradiction_score=contradiction_score,
-            contradiction_margin=contradiction_margin,
-            contradiction_is_dominant=contradiction_is_dominant,
-            mapping_score=mapping_score,
-            cosine_score=cosine_score,
         ):
             return (
                 "divergent",
-                "same_claim_with_bidirectional_nli_contradiction",
+                (
+                    "contradiction_rescue_with_"
+                    "strong_bidirectional_nli"
+                ),
+            )
+
+        if self._has_strong_contradiction(mapping):
+            return (
+                "divergent",
+                (
+                    "same_claim_with_"
+                    "bidirectional_nli_contradiction"
+                ),
             )
 
         alignment_reason = self._get_alignment_reason(
-            nli_evaluated=nli_evaluated,
             entailment_score=entailment_score,
             neutral_score=neutral_score,
             contradiction_score=contradiction_score,
             contradiction_margin=contradiction_margin,
-            contradiction_is_dominant=contradiction_is_dominant,
+            contradiction_is_dominant=(
+                contradiction_is_dominant
+            ),
             mapping_score=mapping_score,
             base_hybrid_score=base_hybrid_score,
             cosine_score=cosine_score,
@@ -406,62 +419,99 @@ class RelationshipClassificationService:
                 alignment_reason,
             )
 
-        if (
-            nli_evaluated
-            and neutral_score
-            >= max(entailment_score, contradiction_score)
+        if neutral_score >= max(
+            entailment_score,
+            contradiction_score,
         ):
             return (
                 "partially_aligned",
                 "related_content_with_nli_neutrality",
             )
 
-        if (
-            nli_evaluated
-            and entailment_score > contradiction_score
-        ):
+        if entailment_score > contradiction_score:
             return (
                 "partially_aligned",
-                "partial_support_with_additional_information",
+                (
+                    "partial_support_with_"
+                    "additional_information"
+                ),
             )
 
         if (
-            cosine_score >= 0.56
+            cosine_score >= MIN_ALIGNED_COSINE_SCORE
             and bm25_score < MIN_ALIGNED_BM25_SCORE
         ):
             return (
                 "partially_aligned",
-                "semantic_match_with_lexical_difference",
+                (
+                    "semantic_match_with_"
+                    "lexical_difference"
+                ),
             )
 
         return (
             "partially_aligned",
-            "moderate_related_content",
+            "accepted_mapping_with_moderate_alignment",
         )
+
     def _has_strong_contradiction(
         self,
-        *,
-        nli_evaluated: bool,
-        contradiction_score: float,
-        contradiction_margin: float,
-        contradiction_is_dominant: bool,
-        mapping_score: float,
-        cosine_score: float,
+        mapping: dict[str, Any],
     ) -> bool:
         """
-        Return True when bidirectional NLI provides strong contradiction evidence.
+        Return True when NLI provides strong contradiction evidence.
 
-        No numeric, casualty, or scope heuristics are used.
+        FinalCrossMappingService has already established that the pair is a
+        valid final mapping. This method therefore does not apply another
+        mapping-score, cosine-score, BM25-score, or base-score threshold.
         """
 
-        if not nli_evaluated:
+        if not bool(
+            mapping.get("nli_evaluated", False)
+        ):
             return False
 
-        if mapping_score < MIN_DIVERGENT_MAPPING_SCORE:
-            return False
+        # A rescued candidate has already passed the stricter contradiction
+        # thresholds in FinalCrossMappingService.
+        if bool(
+            mapping.get(
+                "contradiction_rescue",
+                False,
+            )
+        ):
+            return True
 
-        if cosine_score < MIN_DIVERGENT_COSINE_SCORE:
-            return False
+        contradiction_score = (
+            self._get_required_bounded_score(
+                mapping,
+                "contradiction_score",
+            )
+        )
+        contradiction_margin = (
+            self._get_contradiction_margin(
+                mapping
+            )
+        )
+
+        entailment_score = self._get_required_bounded_score(
+            mapping,
+            "entailment_score",
+        )
+        neutral_score = self._get_required_bounded_score(
+            mapping,
+            "neutral_score",
+        )
+
+        contradiction_is_dominant = bool(
+            mapping.get(
+                "contradiction_is_dominant",
+                contradiction_score
+                > max(
+                    entailment_score,
+                    neutral_score,
+                ),
+            )
+        )
 
         if not contradiction_is_dominant:
             return False
@@ -470,17 +520,21 @@ class RelationshipClassificationService:
             contradiction_score
             >= VERY_STRONG_CONTRADICTION_SCORE
         ):
-            return contradiction_margin >= 0.02
+            return (
+                contradiction_margin
+                >= VERY_STRONG_CONTRADICTION_MARGIN
+            )
 
         return (
-            contradiction_score >= MIN_CONTRADICTION_SCORE
+            contradiction_score
+            >= MIN_CONTRADICTION_SCORE
             and contradiction_margin
             >= MIN_CONTRADICTION_MARGIN
         )
+
     def _get_alignment_reason(
         self,
         *,
-        nli_evaluated: bool,
         entailment_score: float,
         neutral_score: float,
         contradiction_score: float,
@@ -492,10 +546,8 @@ class RelationshipClassificationService:
         bm25_score: float,
     ) -> str | None:
         """
-        Return an alignment reason when similarity is sufficiently strong and
-        bidirectional NLI does not show a meaningful contradiction.
-
-        Numeric differences and scope heuristics are ignored.
+        Return an alignment reason when similarity is strong and NLI does not
+        provide meaningful contradiction evidence.
         """
 
         strong_semantic_alignment = (
@@ -528,8 +580,7 @@ class RelationshipClassificationService:
             return None
 
         contradiction_blocks_alignment = (
-            nli_evaluated
-            and contradiction_is_dominant
+            contradiction_is_dominant
             and contradiction_score >= 0.50
             and contradiction_margin >= 0.03
         )
@@ -537,20 +588,20 @@ class RelationshipClassificationService:
         if contradiction_blocks_alignment:
             return None
 
-        if not nli_evaluated:
-            if very_strong_similarity:
-                return "very_strong_similarity_without_nli"
-
-            return "strong_similarity_without_nli_contradiction"
-
-        if contradiction_score > MAX_ALIGNED_CONTRADICTION_SCORE:
+        if (
+            contradiction_score
+            > MAX_ALIGNED_CONTRADICTION_SCORE
+        ):
             return None
 
         if (
-            entailment_score >= MIN_ALIGNED_ENTAILMENT_SCORE
+            entailment_score
+            >= MIN_ALIGNED_ENTAILMENT_SCORE
             and entailment_score > contradiction_score
         ):
-            return "strong_similarity_with_nli_entailment"
+            return (
+                "strong_similarity_with_nli_entailment"
+            )
 
         if (
             neutral_score >= entailment_score
@@ -561,7 +612,10 @@ class RelationshipClassificationService:
                 or balanced_alignment
             )
         ):
-            return "strong_shared_content_with_additional_detail"
+            return (
+                "strong_shared_content_with_"
+                "additional_detail"
+            )
 
         if (
             entailment_score >= 0.35
@@ -571,7 +625,10 @@ class RelationshipClassificationService:
                 or balanced_alignment
             )
         ):
-            return "strong_similarity_with_partial_nli_support"
+            return (
+                "strong_similarity_with_"
+                "partial_nli_support"
+            )
 
         if (
             contradiction_score < 0.30
@@ -580,52 +637,12 @@ class RelationshipClassificationService:
                 or strong_semantic_alignment
             )
         ):
-            return "strong_similarity_without_meaningful_contradiction"
+            return (
+                "strong_similarity_without_"
+                "meaningful_contradiction"
+            )
 
         return None
-    def _is_related_pair(
-        self,
-        *,
-        cosine_score: float,
-        bm25_score: float,
-        base_hybrid_score: float,
-        mapping_score: float,
-    ) -> bool:
-        """
-        Determine whether two chunks discuss sufficiently related content.
-        """
-
-        strong_semantic_relation = (
-            mapping_score >= MIN_RELATED_MAPPING_SCORE
-            and cosine_score >= MIN_RELATED_COSINE_SCORE
-        )
-
-        if strong_semantic_relation:
-            return True
-
-        balanced_hybrid_relation = (
-            mapping_score >= MIN_RELATED_MAPPING_SCORE
-            and base_hybrid_score
-            >= MIN_RELATED_BASE_HYBRID_SCORE
-            and (
-                cosine_score >= MIN_RELATED_COSINE_SCORE
-                or bm25_score >= MIN_RELATED_BM25_SCORE
-            )
-        )
-
-        if balanced_hybrid_relation:
-            return True
-
-        lexical_relation = (
-            bm25_score >= 0.38
-            and cosine_score >= 0.38
-            and mapping_score >= 0.48
-        )
-
-        if lexical_relation:
-            return True
-
-        return False
 
     def _estimate_confidence(
         self,
@@ -635,96 +652,71 @@ class RelationshipClassificationService:
         reason_code: str,
     ) -> str:
         """
-        Estimate categorical confidence for the assigned relationship.
+        Estimate categorical evidence strength for the assigned label.
 
-        This is an evidence-strength estimate, not a calibrated probability.
+        This is not a calibrated probability.
         """
 
         mapping_score = self._get_mapping_score(
             mapping
         )
-
         cosine_score = self._safe_float(
             mapping.get("cosine_score")
         )
-
         bm25_score = self._safe_float(
             mapping.get("bm25_score")
         )
-
         base_hybrid_score = self._get_base_hybrid_score(
             mapping
         )
 
-        context_support = self._safe_float(
-            mapping.get("context_support")
+        entailment_score = self._get_required_bounded_score(
+            mapping,
+            "entailment_score",
         )
-
-        entailment_score = self._safe_float(
-            mapping.get("entailment_score")
+        neutral_score = self._get_required_bounded_score(
+            mapping,
+            "neutral_score",
         )
-
-        neutral_score = self._safe_float(
-            mapping.get("neutral_score")
+        contradiction_score = (
+            self._get_required_bounded_score(
+                mapping,
+                "contradiction_score",
+            )
         )
-
-        contradiction_score = self._safe_float(
-            mapping.get("contradiction_score")
-        )
-
         contradiction_margin = max(
             0.0,
             self._get_contradiction_margin(mapping),
         )
 
-        nli_evaluated = bool(
-            mapping.get("nli_evaluated", False)
-        )
-
-        scope_mismatch = bool(
-            mapping.get("scope_mismatch", False)
-        )
-
-        explicit_casualty_conflict = bool(
-            mapping.get(
-                "explicit_casualty_conflict",
-                False,
-            )
-        )
-
-        has_numeric_difference = bool(
-            mapping.get(
-                "has_numeric_difference",
-                False,
-            )
-        )
-
-        casualty_numeric_difference = bool(
-            mapping.get(
-                "casualty_numeric_difference",
-                False,
-            )
-        )
-
         if label == "divergent":
-            if not nli_evaluated:
-                return "low"
-
-            evidence_score = (
-                0.50 * contradiction_score
-                + 0.20 * mapping_score
-                + 0.15 * cosine_score
-                + 0.15 * min(
-                    1.0,
-                    contradiction_margin * 2.5,
-                )
+            margin_support = self._clamp(
+                contradiction_margin / 0.40
             )
 
-            if explicit_casualty_conflict:
-                evidence_score += 0.08
-
-            if scope_mismatch:
-                evidence_score -= 0.20
+            if bool(
+                mapping.get(
+                    "contradiction_rescue",
+                    False,
+                )
+            ):
+                evidence_score = (
+                    0.65 * contradiction_score
+                    + 0.20 * margin_support
+                    + 0.10 * base_hybrid_score
+                    + 0.05
+                    * max(
+                        cosine_score,
+                        bm25_score,
+                    )
+                )
+            else:
+                evidence_score = (
+                    0.55 * contradiction_score
+                    + 0.20 * margin_support
+                    + 0.15 * mapping_score
+                    + 0.10 * base_hybrid_score
+                )
 
         elif label == "aligned":
             similarity_evidence = (
@@ -734,27 +726,15 @@ class RelationshipClassificationService:
                 + 0.15 * bm25_score
             )
 
-            if nli_evaluated:
-                nli_alignment_support = max(
-                    entailment_score,
-                    1.0 - contradiction_score,
-                )
+            nli_alignment_support = max(
+                entailment_score,
+                1.0 - contradiction_score,
+            )
 
-                evidence_score = (
-                    0.75 * similarity_evidence
-                    + 0.25 * nli_alignment_support
-                )
-            else:
-                evidence_score = similarity_evidence
-
-            if scope_mismatch:
-                evidence_score -= 0.15
-
-            if (
-                casualty_numeric_difference
-                and contradiction_score >= 0.55
-            ):
-                evidence_score -= 0.10
+            evidence_score = (
+                0.75 * similarity_evidence
+                + 0.25 * nli_alignment_support
+            )
 
         elif label == "partially_aligned":
             relation_evidence = (
@@ -764,53 +744,30 @@ class RelationshipClassificationService:
                 + 0.15 * bm25_score
             )
 
-            if nli_evaluated:
-                partiality_evidence = max(
-                    neutral_score,
-                    min(
-                        entailment_score,
-                        1.0 - contradiction_score,
-                    ),
-                )
+            partiality_evidence = max(
+                neutral_score,
+                min(
+                    entailment_score,
+                    1.0 - contradiction_score,
+                ),
+            )
 
-                evidence_score = (
-                    0.70 * relation_evidence
-                    + 0.30 * partiality_evidence
-                )
-            else:
-                evidence_score = relation_evidence
-
-            if reason_code in {
-                "numeric_difference_with_scope_mismatch",
-                "related_reports_with_different_scope",
-            }:
-                evidence_score = max(
-                    evidence_score,
-                    0.62,
-                )
-
-            if reason_code == "related_reports_with_numeric_update":
-                evidence_score = min(
-                    max(evidence_score, 0.58),
-                    0.76,
-                )
+            evidence_score = (
+                0.70 * relation_evidence
+                + 0.30 * partiality_evidence
+            )
 
             if (
-                reason_code == "moderate_related_content"
+                reason_code
+                == "accepted_mapping_with_moderate_alignment"
                 and evidence_score > 0.76
             ):
                 evidence_score = 0.76
 
         else:
-            relatedness_score = (
-                0.40 * mapping_score
-                + 0.30 * cosine_score
-                + 0.15 * bm25_score
-                + 0.10 * base_hybrid_score
-                + 0.05 * context_support
+            raise ValueError(
+                f"Unsupported relationship label: {label!r}"
             )
-
-            evidence_score = 1.0 - relatedness_score
 
         evidence_score = self._clamp(
             evidence_score
@@ -824,59 +781,109 @@ class RelationshipClassificationService:
 
         return "low"
 
+    def _validate_final_mapping(
+        self,
+        mapping: dict[str, Any],
+    ) -> None:
+        """
+        Validate the minimum contract expected from FinalCrossMappingService.
+        """
+
+        if not mapping.get("a_chunk_id"):
+            raise ValueError(
+                "Every final mapping requires a_chunk_id."
+            )
+
+        if not mapping.get("b_chunk_id"):
+            raise ValueError(
+                "Every final mapping requires b_chunk_id."
+            )
+
+        if (
+            "final_mapping_accepted" in mapping
+            and not bool(
+                mapping.get("final_mapping_accepted")
+            )
+        ):
+            raise ValueError(
+                "RelationshipClassificationService received "
+                "a mapping that was not finally accepted."
+            )
+
+        if not bool(
+            mapping.get("nli_evaluated", False)
+        ):
+            raise ValueError(
+                "RelationshipClassificationService requires "
+                "nli_evaluated=True for every final mapping."
+            )
+
+        self._get_mapping_score(mapping)
+        self._get_base_hybrid_score(mapping)
+
+        self._get_required_bounded_score(
+            mapping,
+            "entailment_score",
+        )
+        self._get_required_bounded_score(
+            mapping,
+            "neutral_score",
+        )
+        self._get_required_bounded_score(
+            mapping,
+            "contradiction_score",
+        )
+        self._get_contradiction_margin(mapping)
+
     def _get_contradiction_margin(
         self,
         mapping: dict[str, Any],
     ) -> float:
         """
-        Return the stored contradiction margin when available.
-
-        For backward compatibility, calculate it from the NLI scores when the
-        contradiction detection service did not provide the field.
+        Return the required finite contradiction margin in [-1, 1].
         """
 
-        if "contradiction_margin" in mapping:
-            return self._safe_float(
-                mapping.get("contradiction_margin")
+        if "contradiction_margin" not in mapping:
+            raise ValueError(
+                "RelationshipClassificationService requires "
+                "contradiction_margin for every final mapping."
             )
 
-        contradiction_score = self._safe_float(
-            mapping.get("contradiction_score")
-        )
-
-        entailment_score = self._safe_float(
-            mapping.get("entailment_score")
-        )
-
-        neutral_score = self._safe_float(
-            mapping.get("neutral_score")
-        )
-
-        return (
-            contradiction_score
-            - max(
-                entailment_score,
-                neutral_score,
+        try:
+            value = float(
+                mapping["contradiction_margin"]
             )
-        )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "contradiction_margin must be numeric."
+            ) from exc
+
+        if not math.isfinite(value):
+            raise ValueError(
+                "contradiction_margin must be finite."
+            )
+
+        if not -1.0 <= value <= 1.0:
+            raise ValueError(
+                "contradiction_margin must be between "
+                "-1.0 and 1.0."
+            )
+
+        return value
 
     def _get_mapping_score(
         self,
         mapping: dict[str, Any],
     ) -> float:
         """
-        Return mapping_score, falling back to hybrid_score only when absent.
+        Return required focus-independent mapping_score.
 
-        A valid value of 0.0 is preserved.
+        This method never falls back to focus-adjusted hybrid_score.
         """
 
-        if "mapping_score" in mapping:
-            return self._safe_float(
-                mapping.get("mapping_score")
-            )
-
-        return self._safe_float(
-            mapping.get("hybrid_score")
+        return self._get_required_bounded_score(
+            mapping,
+            "mapping_score",
         )
 
     def _get_base_hybrid_score(
@@ -884,17 +891,49 @@ class RelationshipClassificationService:
         mapping: dict[str, Any],
     ) -> float:
         """
-        Return base_hybrid_score, falling back to hybrid_score only when absent.
+        Return required unscaled base_hybrid_score.
+
+        This method never falls back to focus-adjusted hybrid_score.
         """
 
-        if "base_hybrid_score" in mapping:
-            return self._safe_float(
-                mapping.get("base_hybrid_score")
+        return self._get_required_bounded_score(
+            mapping,
+            "base_hybrid_score",
+        )
+
+    def _get_required_bounded_score(
+        self,
+        mapping: dict[str, Any],
+        field_name: str,
+    ) -> float:
+        """
+        Return a required finite score in the inclusive range [0, 1].
+        """
+
+        if field_name not in mapping:
+            raise ValueError(
+                "RelationshipClassificationService requires "
+                f"{field_name} for every final mapping."
             )
 
-        return self._safe_float(
-            mapping.get("hybrid_score")
-        )
+        try:
+            value = float(mapping[field_name])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{field_name} must be numeric."
+            ) from exc
+
+        if not math.isfinite(value):
+            raise ValueError(
+                f"{field_name} must be finite."
+            )
+
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(
+                f"{field_name} must be between 0.0 and 1.0."
+            )
+
+        return value
 
     def _build_text_lookup(
         self,
@@ -939,7 +978,9 @@ class RelationshipClassificationService:
             return cleaned_text
 
         return (
-            cleaned_text[: max_chars - 3].rstrip()
+            cleaned_text[
+                : max_chars - 3
+            ].rstrip()
             + "..."
         )
 
@@ -988,7 +1029,7 @@ _relationship_classification_service = (
 def get_relationship_classification_service(
 ) -> RelationshipClassificationService:
     """
-    Return the shared relationship-classification service.
+    Return the shared relationship-classification service instance.
     """
 
     return _relationship_classification_service
