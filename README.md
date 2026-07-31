@@ -65,10 +65,13 @@ Open <http://localhost:5173>. The backend should be running on
 
 More frontend details are in `frontend/README.md`.
 
+The frontend source is organised into components, hooks, services, utilities,
+and feature-specific styles so UI work can be updated without editing one large
+application file.
+
 ## Validation
 
 Frontend:
-
 ```powershell
 cd frontend
 npm test
@@ -77,7 +80,6 @@ npm run build
 ```
 
 Backend/database:
-
 ```powershell
 cd backend
 python scripts/check_db.py --init
@@ -85,7 +87,6 @@ python -m pytest tests/ -v
 ```
 
 Docker:
-
 ```powershell
 docker compose -f docker/docker-compose.yml config
 docker compose -f docker/docker-compose.yml build
