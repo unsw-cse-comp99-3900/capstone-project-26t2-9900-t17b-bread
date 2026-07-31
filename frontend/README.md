@@ -74,13 +74,47 @@ comparison focus.
 
 ```text
 src/
-  App.jsx
-  App.css
-  App.test.jsx
-  config/appConfig.js
-  utils/appHelpers.js
-  test/
+  App.jsx                         # page composition and state wiring
+  main.jsx
+  index.css                       # global variables and base browser styles
+  components/                     # reusable UI sections
+    AccountPanels.jsx
+    ArticleInputs.jsx
+    ArticlePanel.jsx
+    ComparisonResults.jsx
+    MatchExplanationPanel.jsx
+  hooks/                          # frontend state and workflow logic
+    useArticleInputs.js
+    useAuth.js
+    useBackendStatus.js
+    useComparison.js
+    useDemoSamples.js
+  services/                       # API calls
+    authService.js
+    compareService.js
+    demoService.js
+    healthService.js
+    historyService.js
+    uploadService.js
+  styles/                         # feature-specific CSS
+    index.css
+    layout.css
+    account.css
+    inputs.css
+    comparison.css
+    explanation-panel.css
+    utilities.css
+    responsive.css
+  utils/                          # formatting, validation, export helpers
+  test/                           # shared test setup and mock data
+  App.workflow.test.jsx
+  App.comparison.test.jsx
+  App.auth-history.test.jsx
 ```
+
+`App.jsx` should stay focused on composing the page. New workflow logic should
+normally go into hooks, API calls into services, formatting/validation into
+utils, and visual changes into the relevant file under `styles/`.
 
 ## Validation
 
