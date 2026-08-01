@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from app.schemas.article import ProcessedArticle, SentenceUnit
+from app.services.bm25_similarity_service import get_bm25_similarity_service
 from app.services.embedding_service import get_embedding_service
 
 
@@ -17,11 +18,12 @@ class SummaryService:
 
     The service:
     1. Generates an embedding for every valid article sentence.
-    2. Builds a document centroid from all sentence embeddings.
-    3. Scores sentences by semantic relevance to the whole article.
-    4. Applies a redundancy penalty so the summary does not repeat
-       nearly identical information.
-    5. Returns selected sentences in their original article order.
+    2. Calculates semantic relevance using the document centroid.
+    3. Calculates lexical relevance using the shared BM25 service.
+    4. Combines semantic and BM25 scores into one relevance score.
+    5. Filters candidates using a relevance threshold.
+    6. Removes sentences that are too similar to already selected sentences.
+    7. Returns the selected sentences in their original article order.
 
     All summary sentences are copied directly from the source article.
     No new text is generated.
@@ -32,6 +34,9 @@ class SummaryService:
         article: ProcessedArticle,
         *,
         max_sentences: int = 3,
+        semantic_weight: float = 0.7,
+        bm25_weight: float = 0.3,
+        relevance_threshold: float = 0.3,
         redundancy_threshold: float = 0.85,
     ) -> list[dict[str, Any]]:
         """
@@ -41,32 +46,34 @@ class SummaryService:
             article:
                 A ProcessedArticle produced by preprocessing_service.
             max_sentences:
-                Maximum number of original sentences to include.
+                Maximum number of source sentences to return.
+            semantic_weight:
+                Weight given to SBERT semantic relevance.
+            bm25_weight:
+                Weight given to BM25 lexical relevance.
+            relevance_threshold:
+                Candidates below this combined score are ignored.
             redundancy_threshold:
-                A candidate sentence is skipped when its cosine similarity
-                with an already selected sentence is greater than or equal
-                to this value.
-
-        Returns:
-            A list of selected sentence dictionaries. Results are returned
-            in original article order.
-
-        Example:
-            [
-                {
-                    "sentence_id": "A-0",
-                    "article_ref": "A",
-                    "text": "...",
-                    "paragraph_index": 0,
-                    "sentence_index": 0,
-                    "char_start": 0,
-                    "char_end": 82,
-                    "score": 0.7342
-                }
-            ]
+                A candidate is skipped when its cosine similarity with an
+                already selected sentence is greater than or equal to this
+                value.
         """
         if max_sentences <= 0:
             return []
+
+        if semantic_weight < 0 or bm25_weight < 0:
+            raise ValueError("Summary score weights cannot be negative.")
+
+        total_weight = semantic_weight + bm25_weight
+
+        if total_weight <= 0:
+            raise ValueError(
+                "At least one summary score weight must be greater than zero."
+            )
+
+        # Ensure the weights always add up to 1.
+        semantic_weight /= total_weight
+        bm25_weight /= total_weight
 
         valid_sentences = self._get_valid_sentences(article.sentences)
 
@@ -84,28 +91,89 @@ class SummaryService:
         if embeddings.size == 0:
             return []
 
-        relevance_scores = self._calculate_relevance_scores(embeddings)
+        semantic_scores = self._calculate_semantic_scores(embeddings)
+        semantic_scores = self._min_max_normalise(semantic_scores)
+
+        bm25_scores = self._calculate_bm25_scores(valid_sentences)
+
+        combined_scores = (
+            semantic_weight * semantic_scores
+            + bm25_weight * bm25_scores
+        )
 
         selected_indices = self._select_non_redundant_sentences(
             embeddings=embeddings,
-            relevance_scores=relevance_scores,
+            relevance_scores=combined_scores,
             max_sentences=max_sentences,
+            relevance_threshold=relevance_threshold,
             redundancy_threshold=redundancy_threshold,
         )
 
-        # The sentences are ranked for selection, but displayed in their
-        # original article order so the summary remains readable.
+        # Keep the final extractive summary in source order.
         selected_indices.sort(
-            key=lambda index: valid_sentences[index].sentence_index
+            key=lambda index: (
+                valid_sentences[index].paragraph_index,
+                valid_sentences[index].sentence_index,
+            )
         )
 
         return [
             self._build_result(
                 valid_sentences[index],
-                score=float(relevance_scores[index]),
+                score=float(combined_scores[index]),
             )
             for index in selected_indices
         ]
+
+    def summarize_comparison(
+        self,
+        comparison_results: list[dict[str, Any]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        """
+        Generate a structured high-level summary from comparison results.
+
+        Expected relationship labels:
+        - aligned
+        - partially_aligned
+        - divergent
+        - unique_to_a
+        - unique_to_b
+        """
+        summary: dict[str, list[dict[str, Any]]] = {
+            "similarities": [],
+            "differences": [],
+            "unique_to_a": [],
+            "unique_to_b": [],
+        }
+
+        for result in comparison_results:
+            relationship = str(
+                result.get("label", "")
+            ).strip().lower()
+
+            item = {
+                "text_a": result.get("a_text_preview"),
+                "text_b": result.get("b_text_preview"),
+                "score": result.get("score"),
+                "label": relationship,
+            }
+
+            if relationship == "aligned":
+                summary["similarities"].append(item)
+
+            elif relationship in {
+                "partially_aligned",
+                "divergent",
+            }:
+                summary["differences"].append(item)
+
+            elif relationship == "unique_to_a":
+                summary["unique_to_a"].append(item)
+
+            elif relationship == "unique_to_b":
+                summary["unique_to_b"].append(item)
+
+        return summary
 
     @staticmethod
     def _get_valid_sentences(
@@ -125,17 +193,31 @@ class SummaryService:
         norms[norms == 0] = 1.0
         return vectors / norms
 
+    @staticmethod
+    def _min_max_normalise(scores: np.ndarray) -> np.ndarray:
+        """Normalise a one-dimensional score array to the range 0–1."""
+        if scores.size == 0:
+            return scores
+
+        minimum = float(np.min(scores))
+        maximum = float(np.max(scores))
+
+        if maximum <= minimum:
+            return np.ones_like(scores, dtype=float)
+
+        return (scores - minimum) / (maximum - minimum)
+
     def _encode_sentences(
         self,
         sentences: list[SentenceUnit],
     ) -> np.ndarray:
         """
-        Encode sentences using the existing cached SentenceBERT model.
-
-        Reusing get_embedding_service() prevents the backend from loading
-        a second copy of the same model.
+        Encode sentences using the shared cached Sentence-BERT model.
         """
-        texts = [" ".join(sentence.text.split()) for sentence in sentences]
+        texts = [
+            " ".join(sentence.text.split())
+            for sentence in sentences
+        ]
 
         embedding_service = get_embedding_service()
         embeddings = embedding_service.encode_sentences(texts)
@@ -147,20 +229,77 @@ class SummaryService:
 
         return self._normalise_rows(array)
 
-    def _calculate_relevance_scores(
+    def _calculate_semantic_scores(
         self,
         embeddings: np.ndarray,
     ) -> np.ndarray:
         """
-        Score every sentence against the semantic centre of the article.
-
-        A sentence close to the document centroid is likely to represent
-        information central to the overall article.
+        Score each sentence against the semantic centre of the article.
         """
         document_centroid = embeddings.mean(axis=0, keepdims=True)
         document_centroid = self._normalise_rows(document_centroid)
 
         return embeddings @ document_centroid[0]
+
+    def _calculate_bm25_scores(
+        self,
+        sentences: list[SentenceUnit],
+    ) -> np.ndarray:
+        """
+        Calculate lexical relevance using the existing BM25 service.
+
+        The complete article is used as the query, while each sentence is
+        treated as a candidate BM25 document.
+        """
+        article_text = " ".join(
+            " ".join(sentence.text.split())
+            for sentence in sentences
+        )
+
+        query_chunk = {
+            "chunk_id": "summary-query",
+            "article_ref": "SUMMARY",
+            "chunk_index": 0,
+            "paragraph_index": 0,
+            "text": article_text,
+        }
+
+        sentence_chunks = [
+            {
+                "chunk_id": sentence.id,
+                "article_ref": sentence.article_ref,
+                "chunk_index": index,
+                "paragraph_index": sentence.paragraph_index,
+                "text": sentence.text,
+            }
+            for index, sentence in enumerate(sentences)
+        ]
+
+        bm25_service = get_bm25_similarity_service()
+
+        matrix = bm25_service.compute_score_matrix(
+            [query_chunk],
+            sentence_chunks,
+        )
+
+        rows = matrix.get("scores", [])
+        column_ids = matrix.get("cols", [])
+
+        if not rows or not rows[0]:
+            return np.zeros(len(sentences), dtype=float)
+
+        score_by_sentence_id = {
+            sentence_id: float(score)
+            for sentence_id, score in zip(column_ids, rows[0])
+        }
+
+        return np.asarray(
+            [
+                score_by_sentence_id.get(sentence.id, 0.0)
+                for sentence in sentences
+            ],
+            dtype=float,
+        )
 
     def _select_non_redundant_sentences(
         self,
@@ -168,13 +307,11 @@ class SummaryService:
         embeddings: np.ndarray,
         relevance_scores: np.ndarray,
         max_sentences: int,
+        relevance_threshold: float,
         redundancy_threshold: float,
     ) -> list[int]:
         """
-        Select high-relevance sentences while avoiding repetition.
-
-        Ties are resolved by sentence position because np.argsort with the
-        stable sorting algorithm preserves deterministic ordering.
+        Select relevant sentences while avoiding semantic repetition.
         """
         ranked_indices = np.argsort(
             -relevance_scores,
@@ -187,27 +324,33 @@ class SummaryService:
             if len(selected) >= max_sentences:
                 break
 
+            candidate_score = float(relevance_scores[candidate_index])
+
+            # Relevant threshold:
+            # ignore sentences whose combined score is too low.
+            if candidate_score < relevance_threshold:
+                continue
+
             if not selected:
                 selected.append(candidate_index)
                 continue
 
-            similarities = embeddings[selected] @ embeddings[candidate_index]
+            # Similarity threshold:
+            # skip a sentence if it is too similar to a selected sentence.
+            similarities = (
+                embeddings[selected]
+                @ embeddings[candidate_index]
+            )
+
             highest_similarity = float(np.max(similarities))
 
             if highest_similarity < redundancy_threshold:
                 selected.append(candidate_index)
 
-        # If the redundancy filter was too strict, fill the remaining slots
-        # using the next highest-scoring sentences.
-        if len(selected) < max_sentences:
-            for candidate_index in ranked_indices:
-                if candidate_index in selected:
-                    continue
-
-                selected.append(candidate_index)
-
-                if len(selected) >= max_sentences:
-                    break
+        # Avoid returning an empty summary when every candidate falls just
+        # below the relevance threshold.
+        if not selected and ranked_indices:
+            selected.append(ranked_indices[0])
 
         return selected
 
@@ -217,7 +360,7 @@ class SummaryService:
         *,
         score: float,
     ) -> dict[str, Any]:
-        """Convert a selected SentenceUnit into an API-friendly dictionary."""
+        """Convert a selected sentence into an API-friendly dictionary."""
         return {
             "sentence_id": sentence.id,
             "article_ref": sentence.article_ref,
@@ -226,7 +369,7 @@ class SummaryService:
             "sentence_index": sentence.sentence_index,
             "char_start": sentence.char_start,
             "char_end": sentence.char_end,
-            "score": round(score, 6),
+            "score": round(float(np.clip(score, 0.0, 1.0)), 6),
         }
 
 
