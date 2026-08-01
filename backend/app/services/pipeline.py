@@ -1,4 +1,4 @@
-"""Article Processing Pipeline (PROJ-3 + Sprint 2 comparison pipeline)."""
+"""Article processing and staged cross-article comparison pipeline."""
 
 from __future__ import annotations
 
@@ -12,9 +12,15 @@ from app.schemas.article import ProcessedArticle
 from app.services.article_input import ArticleInput, resolve_raw_article
 from app.services.bm25_similarity_service import get_bm25_similarity_service
 from app.services.cosine_similarity_service import get_cosine_similarity_service
-from app.services.cross_mapping_service import get_cross_mapping_service
+from app.services.candidate_cross_mapping_service import (
+    get_candidate_cross_mapping_service,
+)
 from app.services.embedding_service import get_embedding_service
 from app.services.errors import ErrorCode, PipelineError, PipelineStage
+from app.services.final_cross_mapping_service import (
+    get_final_cross_mapping_service,
+)
+from app.services.focus_scaling_service import get_focus_scaling_service
 from app.services.hybrid_scoring_service import get_hybrid_scoring_service
 from app.services.paragraph_chunking_service import build_paragraph_chunks
 from app.services.preprocessing_service import preprocess_article
@@ -66,15 +72,48 @@ class ComparisonPipelineResult:
     focus: str
     cosine_pair_scores: list[dict[str, Any]]
     bm25_pair_scores: list[dict[str, Any]]
-    hybrid_pair_scores: list[dict[str, Any]]
-    cross_mappings: list[dict[str, Any]]
-    analysed_mappings: list[dict[str, Any]]
+    base_pair_scores: list[dict[str, Any]]
+    candidate_mappings: list[dict[str, Any]]
+    analysed_candidates: list[dict[str, Any]]
+    final_mappings: list[dict[str, Any]]
+    classified_relationships: list[dict[str, Any]]
     relationships: list[dict[str, Any]]
     comparison_summary: dict[str, Any]
 
     @property
     def ok(self) -> bool:
         return True
+
+    # ------------------------------------------------------------------
+    # Backward-compatible aliases for callers that still use old names.
+    # ------------------------------------------------------------------
+
+    @property
+    def hybrid_pair_scores(self) -> list[dict[str, Any]]:
+        """
+        Backward-compatible alias.
+
+        HybridScoringService now produces only base_hybrid_score, so this
+        property returns base_pair_scores.
+        """
+
+        return self.base_pair_scores
+
+    @property
+    def cross_mappings(self) -> list[dict[str, Any]]:
+        """
+        Backward-compatible alias for the finally accepted one-to-one mappings.
+        """
+
+        return self.final_mappings
+
+    @property
+    def analysed_mappings(self) -> list[dict[str, Any]]:
+        """
+        Backward-compatible alias for NLI-analysed candidate mappings.
+        """
+
+        return self.analysed_candidates
 
     def to_response_payload(
         self,
@@ -83,28 +122,62 @@ class ComparisonPipelineResult:
         debug_limit: int = 50,
     ) -> dict[str, Any]:
         """
-        Convert internal comparison result into API-friendly response payload.
+        Convert the internal comparison result into an API response.
 
-        The frontend mainly needs:
-        - cross_mappings
-        - relationships
+        The main frontend fields are:
 
-        Debug data is useful in Sprint 2 for checking cosine/BM25/hybrid scores.
+            - final_mappings;
+            - relationships.
+
+        ``cross_mappings`` remains as a temporary compatibility alias for
+        ``final_mappings``.
         """
 
         payload: dict[str, Any] = {
             "focus": self.focus,
             "summary": {
-                "cosine_pair_count": len(self.cosine_pair_scores),
-                "bm25_pair_count": len(self.bm25_pair_scores),
-                "hybrid_pair_count": len(self.hybrid_pair_scores),
-                "cross_mapping_count": len(self.cross_mappings),
+                "cosine_pair_count": len(
+                    self.cosine_pair_scores
+                ),
+                "bm25_pair_count": len(
+                    self.bm25_pair_scores
+                ),
+                "base_pair_count": len(
+                    self.base_pair_scores
+                ),
+                "candidate_mapping_count": len(
+                    self.candidate_mappings
+                ),
                 "nli_evaluated_count": sum(
                     1
-                    for mapping in self.analysed_mappings
-                    if mapping.get("nli_evaluated", False)
+                    for mapping in self.analysed_candidates
+                    if mapping.get(
+                        "nli_evaluated",
+                        False,
+                    )
                 ),
-                "relationship_count": len(self.relationships),
+                "final_mapping_count": len(
+                    self.final_mappings
+                ),
+                "normal_mapping_count": sum(
+                    1
+                    for mapping in self.final_mappings
+                    if mapping.get(
+                        "normal_mapping",
+                        False,
+                    )
+                ),
+                "contradiction_rescue_count": sum(
+                    1
+                    for mapping in self.final_mappings
+                    if mapping.get(
+                        "contradiction_rescue",
+                        False,
+                    )
+                ),
+                "relationship_count": len(
+                    self.relationships
+                ),
                 "aligned_count": sum(
                     1
                     for relationship in self.relationships
@@ -113,7 +186,8 @@ class ComparisonPipelineResult:
                 "partially_aligned_count": sum(
                     1
                     for relationship in self.relationships
-                    if relationship.get("label") == "partially_aligned"
+                    if relationship.get("label")
+                    == "partially_aligned"
                 ),
                 "divergent_count": sum(
                     1
@@ -121,16 +195,43 @@ class ComparisonPipelineResult:
                     if relationship.get("label") == "divergent"
                 ),
             },
-            "cross_mappings": self.cross_mappings,
+
+            # Canonical final output.
+            "final_mappings": self.final_mappings,
             "relationships": self.relationships,
             "comparison_summary": self.comparison_summary,
+
+            # Temporary backward-compatible alias.
+            "cross_mappings": self.final_mappings,
         }
 
         if include_debug:
             payload["debug"] = {
-                "top_hybrid_pair_scores": self.hybrid_pair_scores[:debug_limit],
-                "top_cross_mappings": self.cross_mappings[:debug_limit],
-                "top_nli_analysed_mappings": self.analysed_mappings[:debug_limit],
+                "top_base_pair_scores": (
+                    self.base_pair_scores[
+                        :debug_limit
+                    ]
+                ),
+                "top_candidate_mappings": (
+                    self.candidate_mappings[
+                        :debug_limit
+                    ]
+                ),
+                "top_nli_analysed_candidates": (
+                    self.analysed_candidates[
+                        :debug_limit
+                    ]
+                ),
+                "top_final_mappings": (
+                    self.final_mappings[
+                        :debug_limit
+                    ]
+                ),
+                "top_classified_relationships": (
+                    self.classified_relationships[
+                        :debug_limit
+                    ]
+                ),
             }
 
         return payload
@@ -606,15 +707,21 @@ async def _run_comparison_pipeline(
     progress: ProgressTracker | None = None,
 ) -> ComparisonPipelineResult:
     """
-    Run the pair-level comparison pipeline step by step.
+    Run the pair-level comparison pipeline.
 
-    This async version emits progress after each comparison stage:
-    1. cosine semantic scoring
-    2. BM25 lexical scoring
-    3. hybrid scoring with focus scaling
-    4. cross mapping
-    5. contradiction/NLI detection
-    6. relationship classification
+    Current stage order:
+
+        1. cosine semantic scoring;
+        2. BM25 lexical scoring;
+        3. base hybrid scoring;
+        4. candidate cross mapping;
+        5. bidirectional NLI;
+        6. final strict one-to-one mapping;
+        7. relationship classification;
+        8. focus scaling and factor-relevance ranking.
+
+    Factor scaling runs only after relationship classification. It never
+    affects candidate generation, NLI eligibility, final mapping, or labels.
     """
 
     focus_value = _normalise_focus(focus)
@@ -627,14 +734,32 @@ async def _run_comparison_pipeline(
     cosine_service = get_cosine_similarity_service()
     bm25_service = get_bm25_similarity_service()
     hybrid_service = get_hybrid_scoring_service()
-    cross_mapping_service = get_cross_mapping_service()
-    contradiction_service = get_contradiction_detection_service()
-    relationship_service = get_relationship_classification_service()
+    candidate_mapping_service = (
+        get_candidate_cross_mapping_service()
+    )
+    contradiction_service = (
+        get_contradiction_detection_service()
+    )
+    final_mapping_service = (
+        get_final_cross_mapping_service()
+    )
+    relationship_service = (
+        get_relationship_classification_service()
+    )
+    focus_scaling_service = (
+        get_focus_scaling_service()
+    )
+
+    # ------------------------------------------------------------------
+    # 1. Cosine semantic similarity
+    # ------------------------------------------------------------------
 
     if progress is not None:
         await progress.emit(
             percent=91,
-            message="Computing cosine semantic similarity scores...",
+            message=(
+                "Computing cosine semantic similarity scores..."
+            ),
             step="cosine_similarity",
             status="running",
         )
@@ -647,14 +772,25 @@ async def _run_comparison_pipeline(
 
     if progress is not None:
         await progress.emit(
-            percent=93,
-            message=f"Cosine similarity completed with {len(cosine_pair_scores)} candidate scores.",
+            percent=92,
+            message=(
+                "Cosine similarity completed with "
+                f"{len(cosine_pair_scores)} pair scores."
+            ),
             step="cosine_similarity",
             status="completed",
         )
+
+    # ------------------------------------------------------------------
+    # 2. BM25 lexical similarity
+    # ------------------------------------------------------------------
+
+    if progress is not None:
         await progress.emit(
-            percent=94,
-            message="Computing BM25 lexical similarity scores...",
+            percent=92,
+            message=(
+                "Computing BM25 lexical similarity scores..."
+            ),
             step="bm25_scoring",
             status="running",
         )
@@ -667,95 +803,208 @@ async def _run_comparison_pipeline(
 
     if progress is not None:
         await progress.emit(
-            percent=95,
-            message=f"BM25 scoring completed with {len(bm25_pair_scores)} candidate scores.",
+            percent=93,
+            message=(
+                "BM25 scoring completed with "
+                f"{len(bm25_pair_scores)} pair scores."
+            ),
             step="bm25_scoring",
             status="completed",
         )
+
+    # ------------------------------------------------------------------
+    # 3. Base hybrid scoring
+    # ------------------------------------------------------------------
+
+    if progress is not None:
         await progress.emit(
-            percent=96,
-            message="Combining cosine and BM25 scores with focus scaling...",
-            step="hybrid_scoring",
+            percent=94,
+            message=(
+                "Combining cosine and BM25 into "
+                "base hybrid scores..."
+            ),
+            step="base_hybrid_scoring",
             status="running",
         )
 
-    hybrid_pair_scores = await asyncio.to_thread(
+    base_pair_scores = await asyncio.to_thread(
         hybrid_service.combine_pair_scores,
         cosine_pair_scores=cosine_pair_scores,
         bm25_pair_scores=bm25_pair_scores,
-        chunk_embeddings_a=embeddings_a,
-        chunk_embeddings_b=embeddings_b,
-        focus=focus_value,
+    )
+
+    if progress is not None:
+        await progress.emit(
+            percent=95,
+            message=(
+                "Base hybrid scoring completed with "
+                f"{len(base_pair_scores)} scored pairs."
+            ),
+            step="base_hybrid_scoring",
+            status="completed",
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Candidate cross mapping
+    # ------------------------------------------------------------------
+
+    if progress is not None:
+        await progress.emit(
+            percent=95,
+            message=(
+                "Building high-recall candidate mappings..."
+            ),
+            step="candidate_cross_mapping",
+            status="running",
+        )
+
+    candidate_mappings = await asyncio.to_thread(
+        candidate_mapping_service.build_candidate_mappings,
+        base_pair_scores,
+    )
+
+    if progress is not None:
+        await progress.emit(
+            percent=96,
+            message=(
+                "Candidate cross mapping completed with "
+                f"{len(candidate_mappings)} candidates."
+            ),
+            step="candidate_cross_mapping",
+            status="completed",
+        )
+
+    # ------------------------------------------------------------------
+    # 5. Bidirectional NLI
+    # ------------------------------------------------------------------
+
+    if progress is not None:
+        await progress.emit(
+            percent=96,
+            message=(
+                "Running bidirectional contradiction and "
+                "NLI analysis..."
+            ),
+            step="contradiction_detection",
+            status="running",
+        )
+
+    analysed_candidates = await asyncio.to_thread(
+        contradiction_service.analyse_mappings,
+        candidate_mappings,
+        chunks_a=chunks_a,
+        chunks_b=chunks_b,
+    )
+
+    evaluated_count = sum(
+        1
+        for mapping in analysed_candidates
+        if mapping.get(
+            "nli_evaluated",
+            False,
+        )
     )
 
     if progress is not None:
         await progress.emit(
             percent=97,
-            message=f"Hybrid scoring completed with {len(hybrid_pair_scores)} scored pairs.",
-            step="hybrid_scoring",
-            status="completed",
-        )
-        await progress.emit(
-            percent=98,
-            message="Building cross-article mappings...",
-            step="cross_mapping",
-            status="running",
-        )
-
-    cross_mappings = await asyncio.to_thread(
-        cross_mapping_service.build_cross_mappings,
-        hybrid_pair_scores,
-    )
-
-    if progress is not None:
-        await progress.emit(
-            percent=98,
-            message=f"Cross mapping completed with {len(cross_mappings)} mappings.",
-            step="cross_mapping",
-            status="completed",
-        )
-        await progress.emit(
-            percent=98,
-            message="Running contradiction and NLI analysis...",
-            step="contradiction_detection",
-            status="running",
-        )
-
-    analysed_mappings = await asyncio.to_thread(
-        contradiction_service.analyse_mappings,
-        cross_mappings,
-        chunks_a=chunks_a,
-        chunks_b=chunks_b,
-    )
-
-    if progress is not None:
-        evaluated_count = sum(
-            1
-            for mapping in analysed_mappings
-            if mapping.get("nli_evaluated", False)
-        )
-
-        await progress.emit(
-            percent=99,
             message=(
                 "Contradiction analysis completed with "
-                f"{evaluated_count} NLI-evaluated mappings."
+                f"{evaluated_count} NLI-evaluated candidates."
             ),
             step="contradiction_detection",
             status="completed",
         )
+
+    # ------------------------------------------------------------------
+    # 6. Final strict one-to-one mapping
+    # ------------------------------------------------------------------
+
+    if progress is not None:
         await progress.emit(
-            percent=99,
-            message="Classifying mapped relationship types...",
+            percent=97,
+            message=(
+                "Selecting final strict one-to-one mappings..."
+            ),
+            step="final_cross_mapping",
+            status="running",
+        )
+
+    final_mappings = await asyncio.to_thread(
+        final_mapping_service.build_final_mappings,
+        analysed_candidates,
+    )
+
+    if progress is not None:
+        await progress.emit(
+            percent=98,
+            message=(
+                "Final cross mapping completed with "
+                f"{len(final_mappings)} one-to-one mappings."
+            ),
+            step="final_cross_mapping",
+            status="completed",
+        )
+
+    # ------------------------------------------------------------------
+    # 7. Relationship classification
+    # ------------------------------------------------------------------
+
+    if progress is not None:
+        await progress.emit(
+            percent=98,
+            message=(
+                "Classifying final mapping relationship types..."
+            ),
             step="relationship_classification",
             status="running",
         )
 
-    relationships = await asyncio.to_thread(
+    classified_relationships = await asyncio.to_thread(
         relationship_service.classify_mappings,
-        analysed_mappings,
+        final_mappings,
         chunks_a=chunks_a,
         chunks_b=chunks_b,
+    )
+
+
+    if progress is not None:
+        await progress.emit(
+            percent=99,
+            message=(
+                "Relationship classification completed with "
+                f"{len(classified_relationships)} results."
+            ),
+            step="relationship_classification",
+            status="completed",
+        )
+
+    # ------------------------------------------------------------------
+    # 8. Focus scaling and factor relevance ranking
+    # ------------------------------------------------------------------
+
+    if progress is not None:
+        await progress.emit(
+            percent=99,
+            message=(
+                "Applying focus relevance and display ranking..."
+            ),
+            step="focus_scaling",
+            status="running",
+        )
+
+    relationships = await asyncio.to_thread(
+        focus_scaling_service.enrich_relationships,
+        classified_relationships,
+        embeddings_a=embeddings_a,
+        embeddings_b=embeddings_b,
+        focus=focus_value,
+
+        # General mode preserves relationship/article order. A selected
+        # factor returns results ordered by factor_relevance_score.
+        sort_by_factor_relevance=(
+            focus_value != "general"
+        ),
     )
 
     summary_service = get_summary_service()
@@ -769,10 +1018,10 @@ async def _run_comparison_pipeline(
         await progress.emit(
             percent=99,
             message=(
-                "Relationship classification completed with "
-                f"{len(relationships)} visible results."
+                "Focus scaling completed with "
+                f"{len(relationships)} ranked relationships."
             ),
-            step="relationship_classification",
+            step="focus_scaling",
             status="completed",
         )
 
@@ -780,9 +1029,13 @@ async def _run_comparison_pipeline(
         focus=focus_value,
         cosine_pair_scores=cosine_pair_scores,
         bm25_pair_scores=bm25_pair_scores,
-        hybrid_pair_scores=hybrid_pair_scores,
-        cross_mappings=cross_mappings,
-        analysed_mappings=analysed_mappings,
+        base_pair_scores=base_pair_scores,
+        candidate_mappings=candidate_mappings,
+        analysed_candidates=analysed_candidates,
+        final_mappings=final_mappings,
+        classified_relationships=(
+            classified_relationships
+        ),
         relationships=relationships,
         comparison_summary=comparison_summary,
     )

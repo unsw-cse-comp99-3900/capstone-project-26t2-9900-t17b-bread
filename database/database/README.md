@@ -14,21 +14,27 @@ Note: the Sprint 1 `user_sessions` table has been removed from `init_db.sql`. It
 no longer part of the schema; `session_token` is now only returned in the API
 response, not persisted to its own table.
 
-## Database Schema Updates (Sprint 2 Changes)
-### 2. `paragraph_chunks` Table
+## Database Schema Updates
+### 2. `users` Table
+* **Purpose**: Stores login accounts with hashed passwords and optional display names.
+
+### 3. `auth_tokens` Table
+* **Purpose**: Stores opaque bearer tokens issued after login. Tokens are linked to users and removed on logout.
+
+### 4. `paragraph_chunks` Table
 * **Purpose**: Stores each article's paragraphs individually so they can be embedded and cross-mapped between article A and article B.
 * **Optimization**: Indexed by `article_id` for fast per-article lookups; cascades on article delete.
 
-### 3. `embeddings` Table
+### 5. `embeddings` Table
 * **Purpose**: Stores one SBERT vector embedding per paragraph chunk to support NLP alignment.
 * **Optimization**: Uses native PostgreSQL `FLOAT8[]` arrays to store embedding vectors efficiently; indexed by `chunk_id`.
 
-### 4. `comparison_results` Table
+### 6. `comparison_results` Table
 * **Purpose**: Stores the cross-mapping alignment matrix (`result_json`), plus administrative review tracking (`review_status`, `admin_notes`) used by the admin review portal.
 * **Optimization**: Uses the `JSONB` data type for flexible and high-performance storage of the alignment matrix. `review_status`/`admin_notes` are defined directly in `init_db.sql` (not patched in at runtime).
 
-### 5. `history` Table
-* **Purpose**: Records which `comparison_results` rows have been saved/bookmarked, and when.
+### 7. `history` Table
+* **Purpose**: Records which `comparison_results` rows have been saved/bookmarked by each logged-in user, and when.
 
 ## Backend Connection Guide (FastAPI / SQLAlchemy)
 

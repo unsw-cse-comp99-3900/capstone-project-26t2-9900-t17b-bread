@@ -4,31 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
-
 import os
-import json
 import uuid
-
-from app.db import dal
-from app.db.base import _normalize_url
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
-
-load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    DATABASE_URL = os.getenv(
-        "SQLALCHEMY_DATABASE_URL",
-        "postgresql://postgres:postgres@localhost:5432/postgres"
-    )
-
-engine = create_engine(_normalize_url(DATABASE_URL))
-
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from dotenv import load_dotenv
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    UploadFile,
+)
+from sqlalchemy import create_engine
 
-from app.schemas.compare import CompareRequest, CompareResponse, ComparisonFocus
+from app.api.routes.auth import get_optional_user_from_header
+from app.db import dal
+from app.db.base import _normalize_url
+from app.schemas.compare import (
+    CompareRequest,
+    CompareResponse,
+    ComparisonFocus,
+)
 from app.services.article_input import ArticleInput
 from app.services.pipeline import (
     ArticleResult,
@@ -37,6 +35,20 @@ from app.services.pipeline import (
 )
 from app.services.progress import ProgressTracker
 from app.services.streaming import streaming_response_from_progress
+
+
+load_dotenv()
+
+DATABASE_URL = (
+    os.getenv("DATABASE_URL")
+    or os.getenv("SQLALCHEMY_DATABASE_URL")
+    or "postgresql://postgres:postgres@localhost:5432/postgres"
+)
+
+engine = create_engine(
+    _normalize_url(DATABASE_URL)
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -72,149 +84,876 @@ def _build_stage_error(result: ArticleResult) -> dict[str, Any] | None:
     }
 
 
+SCORE_SCALE_MIN = 0
+SCORE_SCALE_MAX = 20
+
+
+def _safe_float(
+    value: Any,
+    *,
+    default: float = 0.0,
+) -> float:
+    """Convert one value to a finite float."""
+
+    try:
+        converted = float(value)
+    except (TypeError, ValueError):
+        return default
+
+    if not (
+        float("-inf")
+        < converted
+        < float("inf")
+    ):
+        return default
+
+    return converted
+
+
+def _clamp_unit_score(value: Any) -> float:
+    """Clamp an internal model score to the inclusive range [0, 1]."""
+
+    return max(
+        0.0,
+        min(
+            1.0,
+            _safe_float(value),
+        ),
+    )
+
+
+def _to_public_score(value: Any) -> int:
+    """
+    Convert one internal [0, 1] score into the public 0-20 scale.
+
+    Internal model scores remain available inside the pipeline, but the compare
+    response exposes only the explicit, interpreted 0-20 score.
+    """
+
+    return int(
+        round(
+            _clamp_unit_score(value)
+            * SCORE_SCALE_MAX
+        )
+    )
+
+
+def _normalise_focus_value(value: Any) -> str:
+    """Return a lowercase focus string for response construction."""
+
+    if hasattr(value, "value"):
+        value = value.value
+
+    focus_value = str(value or "general").strip().lower()
+
+    if focus_value not in {
+        "general",
+        "political",
+        "sentiment",
+        "economic",
+        "social",
+    }:
+        return "general"
+
+    return focus_value
+
+
+def _match_strength_level(score: int) -> str:
+    """Return the public level for Match Strength."""
+
+    if score <= 4:
+        return "very_low"
+    if score <= 8:
+        return "low"
+    if score <= 12:
+        return "moderate"
+    if score <= 16:
+        return "strong"
+    return "very_strong"
+
+
+def _factor_relevance_level(score: int) -> str:
+    """Return the public level for Factor Relevance."""
+
+    if score <= 4:
+        return "very_low"
+    if score <= 8:
+        return "low"
+    if score <= 12:
+        return "moderate"
+    if score <= 16:
+        return "strong"
+    return "very_strong"
+
+
+def _stance_discrepancy_level(score: int) -> str:
+    """Return the public level for Stance Discrepancy."""
+
+    if score <= 4:
+        return "none"
+    if score <= 8:
+        return "slight"
+    if score <= 12:
+        return "moderate"
+    if score <= 16:
+        return "strong"
+    return "very_strong"
+
+
+def _match_strength_interpretation(score: int) -> str:
+    """Explain what one Match Strength score means for the user."""
+
+    level = _match_strength_level(score)
+
+    messages = {
+        "very_low": (
+            "The two paragraph chunks have very weak content correspondence "
+            "and should not normally be treated as a direct comparison."
+        ),
+        "low": (
+            "The paragraph chunks have limited content correspondence and may "
+            "require manual review before direct comparison."
+        ),
+        "moderate": (
+            "The paragraph chunks discuss a similar topic, but their direct "
+            "correspondence is only moderate."
+        ),
+        "strong": (
+            "The paragraph chunks discuss closely corresponding content and "
+            "are suitable for direct comparison."
+        ),
+        "very_strong": (
+            "The paragraph chunks have exceptionally strong content "
+            "correspondence and should be prioritised as a matched pair."
+        ),
+    }
+
+    return messages[level]
+
+
+def _factor_relevance_interpretation(
+    score: int,
+    *,
+    focus: str,
+) -> str:
+    """Explain relevance to the user's selected comparison factor."""
+
+    focus_name = focus.capitalize()
+    level = _factor_relevance_level(score)
+
+    messages = {
+        "very_low": (
+            f"{focus_name} content is largely absent from this matched pair."
+        ),
+        "low": (
+            f"{focus_name} content is mentioned only briefly in this matched "
+            "pair."
+        ),
+        "moderate": (
+            f"{focus_name} content forms a meaningful part of this matched "
+            "pair, but is not its main focus."
+        ),
+        "strong": (
+            f"{focus_name} content is an important part of this matched pair."
+        ),
+        "very_strong": (
+            f"{focus_name} content is central to this matched pair."
+        ),
+    }
+
+    return messages[level]
+
+
+def _stance_discrepancy_interpretation(score: int) -> str:
+    """
+    Explain model-detected contradiction strength.
+
+    This score is not a factuality judgement and is not a calibrated
+    probability.
+    """
+
+    level = _stance_discrepancy_level(score)
+
+    messages = {
+        "none": (
+            "No meaningful stance discrepancy was detected between the "
+            "paragraph chunks."
+        ),
+        "slight": (
+            "The paragraph chunks mainly differ in wording, emphasis, or "
+            "minor framing."
+        ),
+        "moderate": (
+            "The paragraph chunks contain a noticeable difference in framing "
+            "or claim direction."
+        ),
+        "strong": (
+            "The paragraph chunks contain strong differences in viewpoint or "
+            "factual claims."
+        ),
+        "very_strong": (
+            "The paragraph chunks present directly opposing or highly "
+            "incompatible claims."
+        ),
+    }
+
+    return messages[level]
+
+
+def _build_match_strength_score(
+    mapping_score: Any,
+) -> dict[str, Any]:
+    """Build the public Match Strength score object."""
+
+    score = _to_public_score(mapping_score)
+
+    return {
+        "score": score,
+        "scale_min": SCORE_SCALE_MIN,
+        "scale_max": SCORE_SCALE_MAX,
+        "level": _match_strength_level(score),
+        "interpretation": (
+            _match_strength_interpretation(score)
+        ),
+    }
+
+
+def _build_factor_relevance_score(
+    factor_relevance_score: Any,
+    *,
+    focus: str,
+) -> dict[str, Any] | None:
+    """Build the public Factor Relevance score object."""
+
+    if focus == "general":
+        return None
+
+    score = _to_public_score(
+        factor_relevance_score
+    )
+
+    return {
+        "factor": focus,
+        "score": score,
+        "scale_min": SCORE_SCALE_MIN,
+        "scale_max": SCORE_SCALE_MAX,
+        "level": _factor_relevance_level(score),
+        "interpretation": (
+            _factor_relevance_interpretation(
+                score,
+                focus=focus,
+            )
+        ),
+    }
+
+
+def _build_stance_discrepancy_score(
+    contradiction_score: Any,
+) -> dict[str, Any]:
+    """Build the public Stance Discrepancy score object."""
+
+    score = _to_public_score(
+        contradiction_score
+    )
+
+    return {
+        "score": score,
+        "scale_min": SCORE_SCALE_MIN,
+        "scale_max": SCORE_SCALE_MAX,
+        "level": _stance_discrepancy_level(score),
+        "interpretation": (
+            _stance_discrepancy_interpretation(
+                score
+            )
+        ),
+        "disclaimer": (
+            "This score represents model-detected contradiction strength. "
+            "It is not a probability and does not determine which article "
+            "is factually correct."
+        ),
+    }
+
+
 def _relationship_explanation(
     relationship: dict[str, Any],
 ) -> str:
-    """Create a simple explanation for frontend display."""
+    """Create a concise frontend explanation from the reason code."""
 
     label = relationship.get("label")
     reason_code = relationship.get("reason_code")
 
     if label == "aligned":
-        if reason_code == "strong_similarity_with_nli_entailment":
-            return (
-                "These paragraph chunks present strongly consistent content, "
-                "supported by semantic similarity, lexical overlap, and NLI "
-                "entailment evidence."
-            )
+        aligned_messages = {
+            "strong_similarity_with_nli_entailment": (
+                "These paragraph chunks present strongly consistent content."
+            ),
+            "strong_shared_content_with_additional_detail": (
+                "These paragraph chunks share the same core content, while "
+                "one side includes additional detail."
+            ),
+            "strong_similarity_with_partial_nli_support": (
+                "These paragraph chunks are strongly similar and receive "
+                "partial support from bidirectional NLI."
+            ),
+            "strong_similarity_without_meaningful_contradiction": (
+                "These paragraph chunks are strongly similar and contain no "
+                "meaningful contradiction evidence."
+            ),
+        }
 
-        return (
-            "These paragraph chunks discuss highly similar content with "
-            "strong semantic and lexical support."
+        return aligned_messages.get(
+            reason_code,
+            (
+                "These paragraph chunks present strongly aligned content "
+                "across the two articles."
+            ),
         )
 
     if label == "partially_aligned":
-        if reason_code == "semantic_match_with_lexical_difference":
-            return (
-                "These paragraph chunks discuss related content, but use "
-                "different wording or emphasize different details."
-            )
-
-        if reason_code == "lexical_overlap_with_semantic_difference":
-            return (
-                "These paragraph chunks share important terms or entities, "
-                "but differ in semantic meaning or framing."
-            )
-
-        if reason_code == "related_content_with_nli_neutrality":
-            return (
+        partial_messages = {
+            "semantic_match_with_lexical_difference": (
+                "These paragraph chunks discuss related content using "
+                "different wording or lexical choices."
+            ),
+            "related_content_with_nli_neutrality": (
                 "These paragraph chunks discuss related content, but neither "
                 "clearly support nor contradict each other."
-            )
+            ),
+            "partial_support_with_additional_information": (
+                "These paragraph chunks share part of the same claim, while "
+                "one side contains additional or narrower information."
+            ),
+            "accepted_mapping_with_moderate_alignment": (
+                "These paragraph chunks are valid mapped counterparts with "
+                "moderate alignment in content or framing."
+            ),
+        }
 
-        return (
-            "These paragraph chunks are related, but differ in emphasis, "
-            "detail, or framing."
+        return partial_messages.get(
+            reason_code,
+            (
+                "These paragraph chunks are related, but differ in emphasis, "
+                "detail, or framing."
+            ),
         )
 
     if label == "divergent":
+        if (
+            reason_code
+            == "contradiction_rescue_with_strong_bidirectional_nli"
+        ):
+            return (
+                "These paragraph chunks were retained because the model found "
+                "strong opposing claims despite lower similarity."
+            )
+
         return (
             "These paragraph chunks discuss the same or closely related "
             "subject, but contain strong contradiction evidence."
         )
 
-    return (
-        "These paragraph chunks do not contain enough shared content for "
-        "a reliable relationship classification."
-    )
+    return "No supported relationship classification is available."
 
 
-def _build_frontend_matches(pair_result: PairPipelineResult) -> list[dict[str, Any]]:
+def _safe_order(value: Any) -> int:
+    """Convert one article-order value into a stable sorting integer."""
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 10**9
+
+
+def _build_frontend_matches(
+    pair_result: PairPipelineResult,
+) -> list[dict[str, Any]]:
     """
-    Convert backend relationship results into chunk-level frontend matches.
+    Convert final relationships into transparent frontend scores.
 
-    The comparison unit is paragraph chunk, not sentence.
+    The route uses internal scores only as conversion inputs. Raw cosine, BM25,
+    hybrid, mapping, NLI, confidence, and factor-adjustment values are not
+    exposed in the public response.
     """
 
     if pair_result.comparison is None:
         return []
 
+    focus = _normalise_focus_value(
+        pair_result.comparison.focus
+    )
+
     matches: list[dict[str, Any]] = []
 
-    for index, relationship in enumerate(pair_result.comparison.relationships):
+    for index, relationship in enumerate(
+        pair_result.comparison.relationships
+    ):
         a_chunk_id = relationship.get("a_chunk_id")
         b_chunk_id = relationship.get("b_chunk_id")
 
         if not a_chunk_id or not b_chunk_id:
             continue
 
-        mapping_score = relationship.get("mapping_score")
-        hybrid_score = relationship.get("hybrid_score")
-        base_hybrid_score = relationship.get("base_hybrid_score")
+        match_strength = (
+            _build_match_strength_score(
+                relationship.get("mapping_score")
+            )
+        )
 
-        score = float(hybrid_score) if hybrid_score is not None else 0.0
-        
+        factor_relevance = (
+            _build_factor_relevance_score(
+                relationship.get(
+                    "factor_relevance_score"
+                ),
+                focus=focus,
+            )
+        )
+
+        stance_discrepancy = (
+            _build_stance_discrepancy_score(
+                relationship.get(
+                    "contradiction_score"
+                )
+            )
+        )
+
         matches.append(
             {
-                "id": f"{a_chunk_id}-{b_chunk_id}-{index}",
+                "id": (
+                    f"{a_chunk_id}-"
+                    f"{b_chunk_id}-"
+                    f"{index}"
+                ),
                 "a_chunk_id": a_chunk_id,
                 "b_chunk_id": b_chunk_id,
-                "a_paragraph_index": relationship.get("a_paragraph_index"),
-                "b_paragraph_index": relationship.get("b_paragraph_index"),
-                "a_chunk_index": relationship.get("a_chunk_index"),
-                "b_chunk_index": relationship.get("b_chunk_index"),
-                "label": relationship.get("label", "partially_aligned"),
-                "score": float(score),
-                "confidence": relationship.get("confidence", "medium"),
-                "reason_code": relationship.get("reason_code"),
-                "explanation": _relationship_explanation(relationship),
-                "a_text_preview": relationship.get("a_text_preview"),
-                "b_text_preview": relationship.get("b_text_preview"),
-                "pair_number": relationship.get("pair_number"),
+                "a_paragraph_index": relationship.get(
+                    "a_paragraph_index"
+                ),
+                "b_paragraph_index": relationship.get(
+                    "b_paragraph_index"
+                ),
+                "a_chunk_index": relationship.get(
+                    "a_chunk_index"
+                ),
+                "b_chunk_index": relationship.get(
+                    "b_chunk_index"
+                ),
+
+                "label": relationship.get(
+                    "label",
+                    "partially_aligned",
+                ),
+                "reason_code": relationship.get(
+                    "reason_code"
+                ),
+                "explanation": (
+                    _relationship_explanation(
+                        relationship
+                    )
+                ),
+
+                "match_strength": match_strength,
+                "factor_relevance": factor_relevance,
+                "stance_discrepancy": (
+                    stance_discrepancy
+                ),
+
+                "a_text_preview": relationship.get(
+                    "a_text_preview"
+                ),
+                "b_text_preview": relationship.get(
+                    "b_text_preview"
+                ),
+                "pair_number": relationship.get(
+                    "pair_number"
+                ),
             }
         )
 
+    # The default response order is Best Match. The frontend may re-sort the
+    # same list by factor_relevance.score, stance_discrepancy.score, or article
+    # order without requiring another API call.
+    matches.sort(
+        key=lambda match: (
+            -int(
+                match["match_strength"]["score"]
+            ),
+            _safe_order(
+                match.get("a_chunk_index")
+            ),
+            _safe_order(
+                match.get("b_chunk_index")
+            ),
+        )
+    )
+
     return matches
+
+
+def _build_score_guides(
+    focus: str,
+) -> dict[str, Any]:
+    """Return fixed, actionable score ranges for frontend tooltips."""
+
+    guides: dict[str, Any] = {
+        "match_strength": {
+            "title": "Match Strength",
+            "question": (
+                "How closely do these paragraph chunks correspond in content?"
+            ),
+            "scale_min": SCORE_SCALE_MIN,
+            "scale_max": SCORE_SCALE_MAX,
+            "bands": [
+                {
+                    "min": 0,
+                    "max": 4,
+                    "level": "very_low",
+                    "interpretation": (
+                        "Very weak correspondence; normally not suitable for "
+                        "direct comparison."
+                    ),
+                },
+                {
+                    "min": 5,
+                    "max": 8,
+                    "level": "low",
+                    "interpretation": (
+                        "Limited correspondence; manual review is recommended."
+                    ),
+                },
+                {
+                    "min": 9,
+                    "max": 12,
+                    "level": "moderate",
+                    "interpretation": (
+                        "Similar topic with moderate direct correspondence."
+                    ),
+                },
+                {
+                    "min": 13,
+                    "max": 16,
+                    "level": "strong",
+                    "interpretation": (
+                        "Closely corresponding content suitable for direct "
+                        "comparison."
+                    ),
+                },
+                {
+                    "min": 17,
+                    "max": 20,
+                    "level": "very_strong",
+                    "interpretation": (
+                        "Exceptionally strong correspondence; prioritise this "
+                        "matched pair."
+                    ),
+                },
+            ],
+        },
+        "stance_discrepancy": {
+            "title": "Stance Discrepancy",
+            "question": (
+                "How strongly do the paragraph chunks differ in claim or "
+                "stance?"
+            ),
+            "scale_min": SCORE_SCALE_MIN,
+            "scale_max": SCORE_SCALE_MAX,
+            "disclaimer": (
+                "This is model-detected contradiction strength, not a "
+                "probability or factuality judgement."
+            ),
+            "bands": [
+                {
+                    "min": 0,
+                    "max": 4,
+                    "level": "none",
+                    "interpretation": (
+                        "No meaningful stance discrepancy detected."
+                    ),
+                },
+                {
+                    "min": 5,
+                    "max": 8,
+                    "level": "slight",
+                    "interpretation": (
+                        "Mainly wording, emphasis, or minor framing differences."
+                    ),
+                },
+                {
+                    "min": 9,
+                    "max": 12,
+                    "level": "moderate",
+                    "interpretation": (
+                        "Noticeable difference in framing or claim direction."
+                    ),
+                },
+                {
+                    "min": 13,
+                    "max": 16,
+                    "level": "strong",
+                    "interpretation": (
+                        "Strong differences in viewpoint or factual claims."
+                    ),
+                },
+                {
+                    "min": 17,
+                    "max": 20,
+                    "level": "very_strong",
+                    "interpretation": (
+                        "Directly opposing or highly incompatible claims."
+                    ),
+                },
+            ],
+        },
+    }
+
+    if focus != "general":
+        focus_name = focus.capitalize()
+
+        guides["factor_relevance"] = {
+            "title": f"{focus_name} Relevance",
+            "question": (
+                "How strongly is this matched pair related to the selected "
+                f"{focus_name.lower()} factor?"
+            ),
+            "factor": focus,
+            "scale_min": SCORE_SCALE_MIN,
+            "scale_max": SCORE_SCALE_MAX,
+            "bands": [
+                {
+                    "min": 0,
+                    "max": 4,
+                    "level": "very_low",
+                    "interpretation": (
+                        f"{focus_name} content is largely absent."
+                    ),
+                },
+                {
+                    "min": 5,
+                    "max": 8,
+                    "level": "low",
+                    "interpretation": (
+                        f"{focus_name} content is mentioned only briefly."
+                    ),
+                },
+                {
+                    "min": 9,
+                    "max": 12,
+                    "level": "moderate",
+                    "interpretation": (
+                        f"{focus_name} content is meaningful but not central."
+                    ),
+                },
+                {
+                    "min": 13,
+                    "max": 16,
+                    "level": "strong",
+                    "interpretation": (
+                        f"{focus_name} content is an important part of the pair."
+                    ),
+                },
+                {
+                    "min": 17,
+                    "max": 20,
+                    "level": "very_strong",
+                    "interpretation": (
+                        f"{focus_name} content is central to the pair."
+                    ),
+                },
+            ],
+        }
+
+    return guides
+
+
+def _build_sorting_metadata(
+    focus: str,
+) -> dict[str, Any]:
+    """Describe sorting choices supported directly by the response."""
+
+    options: list[dict[str, Any]] = [
+        {
+            "key": "best_match",
+            "label": "Best Match",
+            "score_path": "match_strength.score",
+            "direction": "descending",
+            "description": (
+                "Show the most strongly corresponding paragraph pairs first."
+            ),
+        },
+    ]
+
+    if focus != "general":
+        focus_name = focus.capitalize()
+
+        options.append(
+            {
+                "key": "selected_factor",
+                "label": (
+                    f"Most Relevant to {focus_name}"
+                ),
+                "score_path": (
+                    "factor_relevance.score"
+                ),
+                "secondary_score_path": (
+                    "match_strength.score"
+                ),
+                "direction": "descending",
+                "description": (
+                    "Show pairs most relevant to the selected factor first. "
+                    "Match Strength is used as the tie-breaker."
+                ),
+            }
+        )
+
+    options.extend(
+        [
+            {
+                "key": "most_divergent",
+                "label": "Most Divergent",
+                "score_path": (
+                    "stance_discrepancy.score"
+                ),
+                "secondary_score_path": (
+                    "match_strength.score"
+                ),
+                "direction": "descending",
+                "description": (
+                    "Show pairs with the strongest model-detected stance "
+                    "difference first."
+                ),
+            },
+            {
+                "key": "article_order",
+                "label": "Article Order",
+                "score_path": None,
+                "direction": "ascending",
+                "description": (
+                    "Show pairs in their original article order."
+                ),
+            },
+        ]
+    )
+
+    return {
+        "default": "best_match",
+        "options": options,
+    }
+
+
+def _mean_public_score(
+    matches: list[dict[str, Any]],
+    *path: str,
+) -> float | None:
+    """Calculate the mean of one nested public score."""
+
+    values: list[int] = []
+
+    for match in matches:
+        current: Any = match
+
+        for key in path:
+            if not isinstance(current, dict):
+                current = None
+                break
+
+            current = current.get(key)
+
+        if current is None:
+            continue
+
+        try:
+            values.append(int(current))
+        except (TypeError, ValueError):
+            continue
+
+    if not values:
+        return None
+
+    return round(
+        sum(values) / len(values),
+        2,
+    )
 
 
 def _build_comparison_payload(
     pair_result: PairPipelineResult,
 ) -> dict[str, Any] | None:
     """
-    Convert internal comparison result into final frontend comparison output.
+    Build the final public comparison payload.
 
-    Only visible relationships are returned:
-        aligned
-        partially_aligned
-        divergent
+    Raw internal model scores are intentionally excluded.
     """
 
     if pair_result.comparison is None:
         return None
 
     comparison = pair_result.comparison
-    matches = _build_frontend_matches(pair_result)
+    focus = _normalise_focus_value(
+        comparison.focus
+    )
+    matches = _build_frontend_matches(
+        pair_result
+    )
+
+    summary: dict[str, Any] = {
+        "match_count": len(matches),
+        "aligned_count": sum(
+            1
+            for match in matches
+            if match.get("label") == "aligned"
+        ),
+        "partially_aligned_count": sum(
+            1
+            for match in matches
+            if (
+                match.get("label")
+                == "partially_aligned"
+            )
+        ),
+        "divergent_count": sum(
+            1
+            for match in matches
+            if match.get("label") == "divergent"
+        ),
+        "average_match_strength": (
+            _mean_public_score(
+                matches,
+                "match_strength",
+                "score",
+            )
+            or 0.0
+        ),
+        "average_stance_discrepancy": (
+            _mean_public_score(
+                matches,
+                "stance_discrepancy",
+                "score",
+            )
+            or 0.0
+        ),
+    }
+
+    average_factor_relevance = (
+        _mean_public_score(
+            matches,
+            "factor_relevance",
+            "score",
+        )
+    )
+
+    if average_factor_relevance is not None:
+        summary["average_factor_relevance"] = (
+            average_factor_relevance
+        )
 
     return {
-        "focus": comparison.focus,
-        "summary": {
-            "match_count": len(matches),
-            "aligned_count": sum(
-                1
-                for match in matches
-                if match.get("label") == "aligned"
-            ),
-            "partially_aligned_count": sum(
-                1
-                for match in matches
-                if match.get("label") == "partially_aligned"
-            ),
-            "divergent_count": sum(
-                1
-                for match in matches
-                if match.get("label") == "divergent"
-            ),
-        },
+        "focus": focus,
+        "summary": summary,
+        "score_guides": _build_score_guides(
+            focus
+        ),
+        "sorting": _build_sorting_metadata(
+            focus
+        ),
         "matches": matches,
         "comparison_summary": comparison.comparison_summary,
     }
@@ -267,6 +1006,7 @@ def _build_compare_response(
     pair_result: PairPipelineResult,
     progress: ProgressTracker | None = None,
     session_token: str | None = None,
+    comparison_id: int | None = None,
 ) -> CompareResponse:
     """Build CompareResponse for all compare endpoints."""
 
@@ -298,6 +1038,7 @@ def _build_compare_response(
 
         "comparison": _build_comparison_payload(pair_result),
         "session_token": session_token,
+        "comparison_id": comparison_id,
     }
 
     supported_fields = _compare_response_fields()
@@ -395,6 +1136,7 @@ async def _run_compare_inputs(
     focus: ComparisonFocus,
     *,
     progress: ProgressTracker | None = None,
+    user_id: int | None = None,
 ) -> CompareResponse:
     """
     Shared core controller logic.
@@ -411,9 +1153,37 @@ async def _run_compare_inputs(
     
     session_token = str(uuid.uuid4())
 
-    frontend_matches = _build_frontend_matches(pair_result)
-    scores = [m.get("score", 0.0) for m in frontend_matches]
-    similarity_score = sum(scores) / len(scores) if scores else 0.0
+    frontend_matches = _build_frontend_matches(
+        pair_result
+    )
+
+    average_match_strength = (
+        _mean_public_score(
+            frontend_matches,
+            "match_strength",
+            "score",
+        )
+        or 0.0
+    )
+
+    average_factor_relevance = (
+        _mean_public_score(
+            frontend_matches,
+            "factor_relevance",
+            "score",
+        )
+    )
+
+    average_stance_discrepancy = (
+        _mean_public_score(
+            frontend_matches,
+            "stance_discrepancy",
+            "score",
+        )
+        or 0.0
+    )
+
+    comparison_id: int | None = None
 
     try:
         with engine.begin() as conn:
@@ -468,18 +1238,42 @@ async def _run_compare_inputs(
 
             if db_id_a and db_id_b:
                 result_payload = {
+                    "focus": focus.value if hasattr(focus, "value") else str(focus),
+                    "articles": [
+                        article_payload
+                        for result in pair_result.articles
+                        if (article_payload := _build_frontend_article(result)) is not None
+                    ],
+                    "comparison": _build_comparison_payload(
+                        pair_result
+                    ),
                     "matches": frontend_matches,
-                    "similarity_score": round(similarity_score, 2),
-                    "session_token": session_token
+
+                    # Public 0-20 aggregate scores. Raw model scores remain
+                    # inside the pipeline and are not persisted in the public
+                    # result payload.
+                    "average_match_strength": (
+                        average_match_strength
+                    ),
+                    "average_factor_relevance": (
+                        average_factor_relevance
+                    ),
+                    "average_stance_discrepancy": (
+                        average_stance_discrepancy
+                    ),
+                    "session_token": session_token,
                 }
                 
                 comparison_id = dal.insert_comparison_result(conn, db_id_a, db_id_b, result_payload)
                 
-                if comparison_id:
-                    dal.insert_history(conn, comparison_id)
-                    logger.info(f"[DB Sync] Automatically logged history for comparison ID: {comparison_id}")
+                if comparison_id and user_id is not None:
+                    dal.insert_history(conn, comparison_id, user_id)
+                    logger.info(
+                        "[DB Sync] Logged user history for comparison ID: %s",
+                        comparison_id,
+                    )
                 
-        logger.info("[DB Sync Success] Sprint 2 pipeline alignment successfully coordinated.")
+        logger.info("[DB Sync Success] Interpretable 0-20 comparison scores and final matches persisted.")
         
     except Exception as db_err:
         logger.critical(f"[CRITICAL DB ERROR]: {db_err}")
@@ -490,6 +1284,7 @@ async def _run_compare_inputs(
         pair_result=pair_result,
         progress=progress,
         session_token=session_token,
+        comparison_id=comparison_id,
     )
 
 
@@ -500,6 +1295,7 @@ async def _run_compare_inputs(
 )
 async def compare(
     payload: CompareRequest,
+    authorization: str | None = Header(default=None),
 ) -> CompareResponse:
     """
     URL and/or pasted-text comparison.
@@ -514,12 +1310,14 @@ async def compare(
     article_a, article_b = _build_json_article_inputs(payload)
 
     progress = ProgressTracker(name="compare")
+    user = get_optional_user_from_header(authorization)
 
     return await _run_compare_inputs(
         article_a,
         article_b,
         payload.focus,
         progress=progress,
+        user_id=int(user["id"]) if user else None,
     )
 
 
@@ -529,6 +1327,7 @@ async def compare(
 )
 async def compare_stream(
     payload: CompareRequest,
+    authorization: str | None = Header(default=None),
 ):
     """
     URL and/or pasted-text comparison.
@@ -546,6 +1345,7 @@ async def compare_stream(
         await progress_queue.put(event)
 
     progress = ProgressTracker(name="compare").bind(on_progress)
+    user = get_optional_user_from_header(authorization)
 
     async def runner() -> dict:
         try:
@@ -556,6 +1356,7 @@ async def compare_stream(
                 article_b,
                 payload.focus,
                 progress=progress,
+                user_id=int(user["id"]) if user else None,
             )
 
             return response.model_dump(exclude_none=True)
@@ -581,6 +1382,7 @@ async def compare_files(
     article_a_file: UploadFile | None = File(default=None),
     article_b_file: UploadFile | None = File(default=None),
     focus: ComparisonFocus = Form(default=ComparisonFocus.GENERAL),
+    authorization: str | None = Header(default=None),
 ) -> CompareResponse:
     """
     Mixed URL / pasted-text / file comparison.
@@ -614,12 +1416,14 @@ async def compare_files(
         ) from exc
 
     progress = ProgressTracker(name="compare")
+    user = get_optional_user_from_header(authorization)
 
     return await _run_compare_inputs(
         article_a,
         article_b,
         focus,
         progress=progress,
+        user_id=int(user["id"]) if user else None,
     )
 
 
@@ -635,6 +1439,7 @@ async def compare_files_stream(
     article_a_file: UploadFile | None = File(default=None),
     article_b_file: UploadFile | None = File(default=None),
     focus: ComparisonFocus = Form(default=ComparisonFocus.GENERAL),
+    authorization: str | None = Header(default=None),
 ):
     """
     Mixed URL / pasted-text / file comparison.
@@ -673,6 +1478,7 @@ async def compare_files_stream(
         await progress_queue.put(event)
 
     progress = ProgressTracker(name="compare").bind(on_progress)
+    user = get_optional_user_from_header(authorization)
 
     async def runner() -> dict:
         try:
@@ -681,6 +1487,7 @@ async def compare_files_stream(
                 article_b,
                 focus,
                 progress=progress,
+                user_id=int(user["id"]) if user else None,
             )
 
             return response.model_dump(exclude_none=True)

@@ -1,5 +1,9 @@
+# backend/app/services/focus_scaling_service.py
+
 from __future__ import annotations
 
+import logging
+import math
 from typing import Any
 
 import numpy as np
@@ -7,26 +11,51 @@ import numpy as np
 from app.services.embedding_service import get_embedding_service
 
 
-FOCUS_PROFILES: dict[str, str] = {
+logger = logging.getLogger(__name__)
+
+
+FOCUS_PROFILES: dict[str, tuple[str, ...]] = {
     "political": (
-        "Government actions, political leaders, public policy, legislation, "
-        "political power, authority, diplomacy, sanctions, conflict, state "
-        "institutions, political responsibility, and official decisions."
+        "The government announced or implemented a policy, law, regulation, "
+        "or official decision.",
+        "Political leaders, parties, elections, ideology, political power, or "
+        "public accountability are central to the report.",
+        "The report concerns sanctions, diplomacy, international relations, "
+        "conflict between states, military action, or national security.",
+        "The passage examines governance, state institutions, civil rights, "
+        "protests, public authority, or political responsibility.",
+        "One government is attempting to pressure, control, punish, or change "
+        "the behaviour of another country or political regime.",
     ),
     "sentiment": (
-        "Emotional tone and human emotion, including fear, anger, grief, "
-        "sympathy, blame, outrage, hope, distress, suffering, tragedy, "
-        "concern, and emotional reactions."
+        "People express fear, anger, outrage, grief, sympathy, hope, distress, "
+        "concern, or another explicit emotion.",
+        "The wording praises, blames, criticises, condemns, reassures, or alarms "
+        "the reader through emotionally charged language.",
+        "The report emphasises suffering, tragedy, loss, danger, relief, or "
+        "people's emotional reactions to an event.",
+        "The passage has a strongly positive, negative, anxious, optimistic, "
+        "or compassionate emotional tone.",
     ),
     "economic": (
-        "Economic and financial issues, including markets, prices, trade, "
-        "business, employment, inflation, investment, budgets, costs, "
-        "financial consequences, production, supply, and resources."
+        "The report concerns prices, markets, trade, tariffs, inflation, costs, "
+        "financial conditions, or economic policy.",
+        "The passage discusses businesses, employment, wages, investment, "
+        "budgets, revenue, spending, or commercial activity.",
+        "The report concerns production, supply, demand, resources, fuel, "
+        "energy availability, shortages, or distribution.",
+        "The passage explains economic consequences for a country, industry, "
+        "organisation, household, or individual.",
     ),
     "social": (
-        "Social and community impact, including civilians, families, public "
-        "life, education, healthcare, housing, inequality, social groups, "
-        "human welfare, communities, and societal consequences."
+        "The event affects civilians, families, communities, social groups, or "
+        "people's everyday public life.",
+        "The report concerns healthcare, education, housing, transport, public "
+        "services, or access to essential needs.",
+        "The passage discusses inequality, vulnerable groups, human welfare, "
+        "social exclusion, or living conditions.",
+        "The report concerns displacement, community disruption, social "
+        "cohesion, collective behaviour, or broader societal consequences.",
     ),
 }
 
@@ -40,70 +69,335 @@ FOCUS_MAX_BOOST: dict[str, float] = {
 }
 
 
-# Absolute cosine-similarity calibration range.
-# This calibrates how strongly a chunk matches the selected focus profile.
-# It is independent from CrossMappingService thresholds.
-FOCUS_SIMILARITY_FLOOR = 0.25
-FOCUS_SIMILARITY_CEILING = 0.55
+# Each focus is represented by several semantic prototypes. For every chunk,
+# the raw focus similarity is the mean of its strongest prototype matches.
+FOCUS_PROTOTYPE_TOP_K = 2
 
-# Cross mapping now accepts base scores from approximately 0.38 upward.
-# Focus scaling should begin near that range, but should still provide no
-# rescue for candidates below the cross-mapping relevance threshold.
+# Dynamic calibration is performed independently for each article side.
+#
+# article_minimum:
+#   If every chunk in an article scores at or below this raw cosine value, the
+#   whole article side is treated as unrelated to the selected focus.
+#
+# chunk_floor:
+#   A chunk below this raw cosine value receives zero relevance even when the
+#   article contains some focus-related content elsewhere.
+#
+# strong_reference:
+#   A conservative raw cosine value representing strong absolute relevance.
+#   It also prevents local min-max scaling from making a weak article appear
+#   strongly relevant merely because one chunk is the local maximum.
+#
+# These values are operational defaults for all-MiniLM-L6-v2 and should be
+# configurable through application settings if the embedding model changes.
+FOCUS_CALIBRATION: dict[str, dict[str, float]] = {
+    "political": {
+        "article_minimum": 0.16,
+        "chunk_floor": 0.08,
+        "strong_reference": 0.35,
+    },
+    "sentiment": {
+        "article_minimum": 0.14,
+        "chunk_floor": 0.06,
+        "strong_reference": 0.33,
+    },
+    "economic": {
+        "article_minimum": 0.16,
+        "chunk_floor": 0.08,
+        "strong_reference": 0.35,
+    },
+    "social": {
+        "article_minimum": 0.15,
+        "chunk_floor": 0.07,
+        "strong_reference": 0.34,
+    },
+}
+
+# Robust local range. Quantiles are used instead of literal minimum and maximum
+# so one outlier cannot define the entire article's score scale.
+FOCUS_LOCAL_LOW_QUANTILE = 0.20
+FOCUS_LOCAL_HIGH_QUANTILE = 0.90
+FOCUS_LOCAL_MIN_SPAN = 0.06
+
+# Final side relevance combines relative position within the article with
+# absolute semantic evidence. The article-level confidence is applied after
+# this mixture.
+FOCUS_LOCAL_WEIGHT = 0.55
+FOCUS_ABSOLUTE_WEIGHT = 0.45
+
+# These gates affect only the focus-adjusted display score. They never affect:
+#
+# - candidate mapping;
+# - NLI eligibility;
+# - final mapping;
+# - relationship classification.
+#
+# factor_relevance_score remains independent of this gate.
 FOCUS_GATE_START_SCORE = 0.38
 FOCUS_GATE_FULL_SCORE = 0.58
 
 
+def _normalise_focus(focus: Any) -> str:
+    """
+    Convert a frontend string or enum value into a normalized focus name.
+    """
+
+    if focus is None:
+        return "general"
+
+    if hasattr(focus, "value"):
+        focus = focus.value
+
+    value = str(focus).strip().lower()
+
+    if not value:
+        return "general"
+
+    if value not in FOCUS_PROFILES:
+        return "general"
+
+    return value
+
+
 class FocusScalingService:
     """
-    Apply user focus preference using semantic focus relevance.
+    Add focus relevance and focus-based display ranking after classification.
 
-    Focus scaling is used to re-rank already relevant chunk pairs.
-    It should not convert weak or unrelated pairs into valid mappings.
+    Recommended pipeline position:
+
+        final_mappings
+            -> relationships
+            -> FocusScalingService.enrich_relationships(...)
+
+    This service does not change whether a pair is mapped and does not change
+    aligned / partially_aligned / divergent labels.
+
+    Two different outputs are intentionally kept separate:
+
+    1. factor_relevance_score
+
+       Pure pair-level relevance to the selected focus, in [0, 1]. It is
+       independent of base_hybrid_score and can be used directly for focus-only
+       ranking.
+
+    2. focus_adjusted_score
+
+       A bounded display score calculated by applying a small focus boost to
+       base_hybrid_score. It can be used when the UI needs one score combining
+       content similarity and focus preference.
     """
 
     def __init__(self) -> None:
         self._focus_embedding_cache: dict[str, np.ndarray] = {}
+
+    def enrich_relationships(
+        self,
+        relationships: list[dict[str, Any]],
+        *,
+        embeddings_a: list[dict[str, Any]],
+        embeddings_b: list[dict[str, Any]],
+        focus: Any = "general",
+        sort_by_factor_relevance: bool = False,
+    ) -> list[dict[str, Any]]:
+        """
+        Add focus fields to classified relationships.
+
+        Every returned item includes:
+
+            factor_relevance_score
+            factor_rank
+            focus_adjusted_score
+            factor_adjustment
+            factor_adjustment_percent
+            scale_factor
+
+        When sort_by_factor_relevance=True, results are returned in descending
+        factor relevance. Otherwise, the original relationship order is
+        preserved while factor_rank still records the focus-specific rank.
+        """
+
+        if not relationships:
+            return []
+
+        focus_value = _normalise_focus(focus)
+
+        focus_relevance_lookup = (
+            self.compute_focus_relevance_lookup(
+                embeddings_a,
+                embeddings_b,
+                focus=focus_value,
+            )
+        )
+
+        enriched_relationships: list[dict[str, Any]] = []
+
+        for relationship in relationships:
+            a_chunk_id = relationship.get("a_chunk_id")
+            b_chunk_id = relationship.get("b_chunk_id")
+
+            if not a_chunk_id or not b_chunk_id:
+                continue
+
+            base_hybrid_score = (
+                self._get_required_bounded_score(
+                    relationship,
+                    "base_hybrid_score",
+                )
+            )
+
+            scaling_result = self.apply_focus_scaling(
+                base_score=base_hybrid_score,
+                a_chunk_id=str(a_chunk_id),
+                b_chunk_id=str(b_chunk_id),
+                focus=focus_value,
+                focus_relevance_lookup=(
+                    focus_relevance_lookup
+                ),
+            )
+
+            enriched = dict(relationship)
+
+            enriched.update(
+                {
+                    "focus": scaling_result["focus"],
+                    "a_focus_relevance": (
+                        scaling_result[
+                            "a_focus_relevance"
+                        ]
+                    ),
+                    "b_focus_relevance": (
+                        scaling_result[
+                            "b_focus_relevance"
+                        ]
+                    ),
+                    "bilateral_focus_relevance": (
+                        scaling_result[
+                            "bilateral_focus_relevance"
+                        ]
+                    ),
+
+                    # Main score for focus-only ranking.
+                    "factor_relevance_score": (
+                        scaling_result[
+                            "factor_relevance_score"
+                        ]
+                    ),
+
+                    # Backward-compatible alias.
+                    "pair_focus_relevance": (
+                        scaling_result[
+                            "factor_relevance_score"
+                        ]
+                    ),
+
+                    "focus_gate": (
+                        scaling_result["focus_gate"]
+                    ),
+                    "max_focus_boost": (
+                        scaling_result[
+                            "max_focus_boost"
+                        ]
+                    ),
+                    "effective_boost": (
+                        scaling_result[
+                            "effective_boost"
+                        ]
+                    ),
+                    "scale_factor": (
+                        scaling_result["scale_factor"]
+                    ),
+                    "factor_adjustment": (
+                        scaling_result[
+                            "factor_adjustment"
+                        ]
+                    ),
+                    "factor_adjustment_percent": (
+                        scaling_result[
+                            "factor_adjustment_percent"
+                        ]
+                    ),
+
+                    # Combined content + focus display score.
+                    "focus_adjusted_score": (
+                        scaling_result[
+                            "focus_adjusted_score"
+                        ]
+                    ),
+
+                    # Explicit compatibility names for existing consumers.
+                    "focus_adjusted_hybrid_score": (
+                        scaling_result[
+                            "focus_adjusted_score"
+                        ]
+                    ),
+                    "hybrid_score": (
+                        scaling_result[
+                            "focus_adjusted_score"
+                        ]
+                    ),
+                }
+            )
+
+            enriched_relationships.append(enriched)
+
+        ranked_relationships = sorted(
+            enriched_relationships,
+            key=self._factor_ranking_key,
+        )
+
+        for factor_rank, relationship in enumerate(
+            ranked_relationships,
+            start=1,
+        ):
+            relationship["factor_rank"] = factor_rank
+
+        if sort_by_factor_relevance:
+            return ranked_relationships
+
+        return enriched_relationships
 
     def compute_focus_relevance_lookup(
         self,
         embeddings_a: list[dict[str, Any]],
         embeddings_b: list[dict[str, Any]],
         *,
-        focus: str,
-    ) -> dict[str, float]:
+        focus: Any,
+    ) -> dict[str, dict[str, float]]:
         """
-        Compute an absolute focus relevance score for each chunk.
+        Compute calibrated focus relevance independently for each article.
 
-        The score is calibrated to the fixed range [0, 1] rather than
-        normalized relative to the strongest chunk in the current articles.
+        The two article sides use the same absolute focus configuration but
+        derive their robust local ranges from their own chunk distributions.
+        An absolute article-level gate prevents an unrelated article from being
+        assigned artificial relevance by local normalization.
         """
 
-        focus = (focus or "general").strip().lower()
+        focus_value = _normalise_focus(focus)
 
-        if focus == "general" or focus not in FOCUS_PROFILES:
-            return {}
+        if focus_value == "general":
+            return {
+                "a": {},
+                "b": {},
+            }
 
-        focus_vector = self._get_focus_embedding(focus)
+        focus_vectors = self._get_focus_embeddings(
+            focus_value
+        )
 
-        chunk_scores: dict[str, float] = {}
-
-        for item in embeddings_a + embeddings_b:
-            chunk_id = item.get("chunk_id")
-            vector = item.get("embedding")
-
-            if not chunk_id or not isinstance(vector, list) or not vector:
-                continue
-
-            chunk_vector = np.asarray(vector, dtype=float)
-            chunk_vector = self._safe_normalize_vector(chunk_vector)
-
-            raw_similarity = float(chunk_vector @ focus_vector)
-
-            chunk_scores[chunk_id] = self._calibrate_focus_similarity(
-                raw_similarity
-            )
-
-        return chunk_scores
+        return {
+            "a": self._compute_side_relevance(
+                embeddings_a,
+                focus_vectors=focus_vectors,
+                focus=focus_value,
+                side="a",
+            ),
+            "b": self._compute_side_relevance(
+                embeddings_b,
+                focus_vectors=focus_vectors,
+                focus=focus_value,
+                side="b",
+            ),
+        }
 
     def apply_focus_scaling(
         self,
@@ -111,138 +405,501 @@ class FocusScalingService:
         base_score: float,
         a_chunk_id: str,
         b_chunk_id: str,
-        focus: str,
-        focus_relevance_lookup: dict[str, float],
+        focus: Any,
+        focus_relevance_lookup: dict[
+            str,
+            dict[str, float],
+        ],
     ) -> dict[str, Any]:
         """
-        Apply a bounded focus-based ranking boost.
+        Calculate focus relevance and a bounded focus-adjusted display score.
 
-        Both chunks should be relevant to the selected focus. The boost is
-        also gated by the original base similarity so that weak pairs cannot
-        be rescued only because one chunk matches the selected focus.
+        factor_relevance_score is the pure focus relevance of the pair:
+
+            0.80 * geometric_mean(a_relevance, b_relevance)
+            + 0.20 * max(a_relevance, b_relevance)
+
+        focus_adjusted_score is:
+
+            base_score * (
+                1
+                + max_focus_boost
+                * factor_relevance_score
+                * focus_gate
+            )
+
+        The pure factor relevance is returned even when focus_gate is zero.
+        Therefore, contradiction-rescue mappings with a lower base score can
+        still be ranked accurately by their relevance to the selected focus.
         """
 
-        focus = (focus or "general").strip().lower()
+        focus_value = _normalise_focus(focus)
         base_score = self._clamp(base_score)
 
-        if focus == "general" or focus not in FOCUS_PROFILES:
-            return {
-                "focus": "general",
-                "a_focus_relevance": 0.0,
-                "b_focus_relevance": 0.0,
-                "pair_focus_relevance": 0.0,
-                "focus_gate": 0.0,
-                "effective_boost": 0.0,
-                "scale_factor": 1.0,
-                "final_score": base_score,
-            }
+        if focus_value == "general":
+            return self._general_result(
+                base_score=base_score
+            )
 
         a_relevance = self._clamp(
-            focus_relevance_lookup.get(a_chunk_id, 0.0)
+            focus_relevance_lookup
+            .get("a", {})
+            .get(str(a_chunk_id), 0.0)
         )
+
         b_relevance = self._clamp(
-            focus_relevance_lookup.get(b_chunk_id, 0.0)
+            focus_relevance_lookup
+            .get("b", {})
+            .get(str(b_chunk_id), 0.0)
         )
 
-        # Geometric mean requires both sides to be relevant.
+        # Geometric mean emphasizes bilateral focus relevance.
         bilateral_relevance = float(
-            np.sqrt(a_relevance * b_relevance)
+            np.sqrt(
+                a_relevance
+                * b_relevance
+            )
         )
 
-        # Keep a small contribution from the stronger side.
-        pair_relevance = (
+        factor_relevance_score = self._clamp(
             0.80 * bilateral_relevance
-            + 0.20 * max(a_relevance, b_relevance)
+            + 0.20
+            * max(
+                a_relevance,
+                b_relevance,
+            )
         )
 
-        focus_gate = self._compute_focus_gate(base_score)
-
-        max_boost = FOCUS_MAX_BOOST.get(focus, 0.0)
-
-        effective_boost = (
-            max_boost
-            * pair_relevance
-            * focus_gate
+        focus_gate = self._compute_focus_gate(
+            base_score
         )
 
-        scale_factor = 1.0 + effective_boost
-        final_score = min(base_score * scale_factor, 1.0)
+        max_focus_boost = FOCUS_MAX_BOOST.get(
+            focus_value,
+            0.0,
+        )
+
+        effective_boost = self._clamp(
+            max_focus_boost
+            * factor_relevance_score
+            * focus_gate,
+            minimum=0.0,
+            maximum=max_focus_boost,
+        )
+
+        scale_factor = (
+            1.0
+            + effective_boost
+        )
+
+        focus_adjusted_score = self._clamp(
+            base_score
+            * scale_factor
+        )
+
+        factor_adjustment = (
+            focus_adjusted_score
+            - base_score
+        )
 
         return {
-            "focus": focus,
+            "focus": focus_value,
             "a_focus_relevance": a_relevance,
             "b_focus_relevance": b_relevance,
-            "bilateral_focus_relevance": bilateral_relevance,
-            "pair_focus_relevance": pair_relevance,
+            "bilateral_focus_relevance": (
+                bilateral_relevance
+            ),
+
+            # Pure focus score for factor-specific ranking.
+            "factor_relevance_score": (
+                factor_relevance_score
+            ),
+
+            # Backward-compatible alias.
+            "pair_focus_relevance": (
+                factor_relevance_score
+            ),
+
             "focus_gate": focus_gate,
+            "max_focus_boost": max_focus_boost,
             "effective_boost": effective_boost,
             "scale_factor": scale_factor,
-            "final_score": final_score,
+
+            # Absolute increase on the 0-1 score scale.
+            "factor_adjustment": factor_adjustment,
+
+            # Relative multiplicative increase, expressed as percent.
+            "factor_adjustment_percent": (
+                effective_boost * 100.0
+            ),
+
+            "focus_adjusted_score": (
+                focus_adjusted_score
+            ),
+
+            # Compatibility alias.
+            "final_score": focus_adjusted_score,
         }
 
-    def _get_focus_embedding(self, focus: str) -> np.ndarray:
+    def _compute_side_relevance(
+        self,
+        embeddings: list[dict[str, Any]],
+        *,
+        focus_vectors: np.ndarray,
+        focus: str,
+        side: str,
+    ) -> dict[str, float]:
         """
-        Encode and cache the selected focus profile.
+        Compute article-local focus relevance for one article side.
+
+        Processing order:
+
+        1. Calculate each chunk's raw similarity against multiple focus
+           prototypes.
+        2. Reject the whole article side when its strongest chunk does not pass
+           the absolute article minimum.
+        3. Build a robust local range from article-level quantiles.
+        4. Combine local relative relevance with absolute semantic relevance.
+        5. Scale all results by article-level confidence.
+        """
+
+        raw_scores: dict[str, float] = {}
+
+        for item in embeddings:
+            chunk_id = item.get("chunk_id")
+            vector = item.get("embedding")
+
+            if chunk_id is None or vector is None:
+                continue
+
+            try:
+                chunk_vector = np.asarray(
+                    vector,
+                    dtype=float,
+                )
+            except (TypeError, ValueError):
+                continue
+
+            if (
+                chunk_vector.ndim != 1
+                or chunk_vector.size == 0
+                or not np.all(
+                    np.isfinite(chunk_vector)
+                )
+            ):
+                continue
+
+            chunk_vector = self._safe_normalize_vector(
+                chunk_vector
+            )
+
+            if chunk_vector.size != focus_vectors.shape[1]:
+                raise ValueError(
+                    "Chunk embedding dimension does not "
+                    "match focus embedding dimension."
+                )
+
+            prototype_scores = (
+                focus_vectors @ chunk_vector
+            )
+
+            top_k = min(
+                FOCUS_PROTOTYPE_TOP_K,
+                prototype_scores.size,
+            )
+
+            if top_k <= 0:
+                continue
+
+            strongest_scores = np.sort(
+                prototype_scores
+            )[-top_k:]
+
+            raw_scores[str(chunk_id)] = float(
+                np.mean(strongest_scores)
+            )
+
+        return self._calibrate_side_scores(
+            raw_scores,
+            focus=focus,
+            side=side,
+        )
+
+    def _calibrate_side_scores(
+        self,
+        raw_scores: dict[str, float],
+        *,
+        focus: str,
+        side: str,
+    ) -> dict[str, float]:
+        """
+        Convert raw similarities into [0, 1] using an absolute gate plus a
+        robust article-local range.
+
+        Local scaling alone is unsafe because it always creates a local winner,
+        even for an unrelated article. The article confidence term preserves
+        the absolute strength of the evidence.
+        """
+
+        if not raw_scores:
+            return {}
+
+        config = FOCUS_CALIBRATION[focus]
+
+        article_minimum = config["article_minimum"]
+        chunk_floor = config["chunk_floor"]
+        strong_reference = config["strong_reference"]
+
+        values = np.asarray(
+            list(raw_scores.values()),
+            dtype=float,
+        )
+
+        article_max = float(np.max(values))
+
+        if article_max <= article_minimum:
+            logger.debug(
+                "Focus side rejected: focus=%s side=%s "
+                "article_max=%.4f minimum=%.4f",
+                focus,
+                side,
+                article_max,
+                article_minimum,
+            )
+            return {
+                chunk_id: 0.0
+                for chunk_id in raw_scores
+            }
+
+        confidence_denominator = (
+            strong_reference
+            - article_minimum
+        )
+
+        if confidence_denominator <= 0.0:
+            raise ValueError(
+                "strong_reference must be greater than "
+                "article_minimum."
+            )
+
+        article_confidence = self._clamp(
+            (
+                article_max
+                - article_minimum
+            )
+            / confidence_denominator
+        )
+
+        local_floor = max(
+            chunk_floor,
+            float(
+                np.quantile(
+                    values,
+                    FOCUS_LOCAL_LOW_QUANTILE,
+                )
+            ),
+        )
+
+        local_ceiling = max(
+            float(
+                np.quantile(
+                    values,
+                    FOCUS_LOCAL_HIGH_QUANTILE,
+                )
+            ),
+            local_floor + FOCUS_LOCAL_MIN_SPAN,
+        )
+
+        local_denominator = (
+            local_ceiling
+            - local_floor
+        )
+
+        absolute_denominator = (
+            strong_reference
+            - chunk_floor
+        )
+
+        if absolute_denominator <= 0.0:
+            raise ValueError(
+                "strong_reference must be greater than "
+                "chunk_floor."
+            )
+
+        calibrated: dict[str, float] = {}
+
+        for chunk_id, raw_similarity in raw_scores.items():
+            if raw_similarity <= chunk_floor:
+                calibrated[chunk_id] = 0.0
+                continue
+
+            local_score = self._clamp(
+                (
+                    raw_similarity
+                    - local_floor
+                )
+                / local_denominator
+            )
+
+            absolute_score = self._clamp(
+                (
+                    raw_similarity
+                    - chunk_floor
+                )
+                / absolute_denominator
+            )
+
+            combined_score = (
+                FOCUS_LOCAL_WEIGHT
+                * local_score
+                + FOCUS_ABSOLUTE_WEIGHT
+                * absolute_score
+            )
+
+            calibrated[chunk_id] = self._clamp(
+                article_confidence
+                * combined_score
+            )
+
+        logger.debug(
+            "Focus calibration: focus=%s side=%s chunks=%d "
+            "article_max=%.4f confidence=%.4f "
+            "local_floor=%.4f local_ceiling=%.4f",
+            focus,
+            side,
+            len(raw_scores),
+            article_max,
+            article_confidence,
+            local_floor,
+            local_ceiling,
+        )
+
+        return calibrated
+
+    def _factor_ranking_key(
+        self,
+        relationship: dict[str, Any],
+    ) -> tuple[Any, ...]:
+        """
+        Rank primarily by pure factor relevance.
+
+        Mapping and base scores are used only as deterministic tie-breakers.
+        """
+
+        factor_relevance_score = self._safe_float(
+            relationship.get(
+                "factor_relevance_score"
+            )
+        )
+
+        mapping_score = self._safe_float(
+            relationship.get(
+                "mapping_score"
+            )
+        )
+
+        base_hybrid_score = self._safe_float(
+            relationship.get(
+                "base_hybrid_score"
+            )
+        )
+
+        pair_number = self._safe_int(
+            relationship.get("pair_number")
+        )
+
+        return (
+            -factor_relevance_score,
+            -mapping_score,
+            -base_hybrid_score,
+            pair_number,
+        )
+
+    def _general_result(
+        self,
+        *,
+        base_score: float,
+    ) -> dict[str, Any]:
+        return {
+            "focus": "general",
+            "a_focus_relevance": 0.0,
+            "b_focus_relevance": 0.0,
+            "bilateral_focus_relevance": 0.0,
+            "factor_relevance_score": 0.0,
+            "pair_focus_relevance": 0.0,
+            "focus_gate": 0.0,
+            "max_focus_boost": 0.0,
+            "effective_boost": 0.0,
+            "scale_factor": 1.0,
+            "factor_adjustment": 0.0,
+            "factor_adjustment_percent": 0.0,
+            "focus_adjusted_score": base_score,
+            "final_score": base_score,
+        }
+
+    def _get_focus_embeddings(
+        self,
+        focus: str,
+    ) -> np.ndarray:
+        """
+        Encode and cache all semantic prototypes for the selected focus.
+
+        Return shape:
+
+            (prototype_count, embedding_dimension)
         """
 
         if focus in self._focus_embedding_cache:
-            return self._focus_embedding_cache[focus]
+            return self._focus_embedding_cache[
+                focus
+            ]
 
-        profile = FOCUS_PROFILES[focus]
+        profiles = FOCUS_PROFILES[focus]
 
         embedding_service = get_embedding_service()
 
-        vector = embedding_service.model.encode(
-            profile,
+        vectors = embedding_service.model.encode(
+            list(profiles),
             convert_to_numpy=True,
             normalize_embeddings=True,
             show_progress_bar=False,
         )
 
-        vector = np.asarray(vector, dtype=float)
-        vector = self._safe_normalize_vector(vector)
-
-        self._focus_embedding_cache[focus] = vector
-
-        return vector
-
-    def _calibrate_focus_similarity(
-        self,
-        raw_similarity: float,
-    ) -> float:
-        """
-        Convert absolute cosine similarity into a bounded 0-1 score.
-
-        Values below the floor receive no focus relevance.
-        Values at or above the ceiling receive full relevance.
-        """
-
-        denominator = (
-            FOCUS_SIMILARITY_CEILING
-            - FOCUS_SIMILARITY_FLOOR
+        vectors = np.asarray(
+            vectors,
+            dtype=float,
         )
 
-        if denominator <= 0:
+        if (
+            vectors.ndim != 2
+            or vectors.shape[0] == 0
+            or vectors.shape[1] == 0
+            or not np.all(np.isfinite(vectors))
+        ):
             raise ValueError(
-                "FOCUS_SIMILARITY_CEILING must be greater than "
-                "FOCUS_SIMILARITY_FLOOR."
+                "Focus embeddings must be a finite "
+                "two-dimensional matrix."
             )
 
-        calibrated = (
-            raw_similarity - FOCUS_SIMILARITY_FLOOR
-        ) / denominator
+        normalized_vectors = np.vstack(
+            [
+                self._safe_normalize_vector(vector)
+                for vector in vectors
+            ]
+        )
 
-        return self._clamp(calibrated)
+        self._focus_embedding_cache[focus] = (
+            normalized_vectors
+        )
+
+        return normalized_vectors
 
     def _compute_focus_gate(
         self,
         base_score: float,
     ) -> float:
         """
-        Compute how much focus scaling is allowed based on base similarity.
-
-        Weak pairs receive no or limited boost. Strong pairs can receive the
-        full focus boost.
+        Control only the size of the focus-adjusted display-score boost.
         """
 
         if base_score <= FOCUS_GATE_START_SCORE:
@@ -251,22 +908,97 @@ class FocusScalingService:
         if base_score >= FOCUS_GATE_FULL_SCORE:
             return 1.0
 
-        return (
-            base_score - FOCUS_GATE_START_SCORE
-        ) / (
-            FOCUS_GATE_FULL_SCORE - FOCUS_GATE_START_SCORE
+        denominator = (
+            FOCUS_GATE_FULL_SCORE
+            - FOCUS_GATE_START_SCORE
+        )
+
+        if denominator <= 0:
+            raise ValueError(
+                "FOCUS_GATE_FULL_SCORE must be greater "
+                "than FOCUS_GATE_START_SCORE."
+            )
+
+        return self._clamp(
+            (
+                base_score
+                - FOCUS_GATE_START_SCORE
+            )
+            / denominator
         )
 
     def _safe_normalize_vector(
         self,
         vector: np.ndarray,
     ) -> np.ndarray:
-        norm = np.linalg.norm(vector)
+        norm = float(
+            np.linalg.norm(vector)
+        )
 
-        if norm == 0:
-            return vector
+        if not math.isfinite(norm) or norm <= 0.0:
+            return np.zeros_like(
+                vector,
+                dtype=float,
+            )
 
         return vector / norm
+
+    def _get_required_bounded_score(
+        self,
+        item: dict[str, Any],
+        field_name: str,
+    ) -> float:
+        if field_name not in item:
+            raise ValueError(
+                "FocusScalingService requires "
+                f"{field_name} for every relationship."
+            )
+
+        try:
+            value = float(item[field_name])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{field_name} must be numeric."
+            ) from exc
+
+        if not math.isfinite(value):
+            raise ValueError(
+                f"{field_name} must be finite."
+            )
+
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(
+                f"{field_name} must be between 0.0 and 1.0."
+            )
+
+        return value
+
+    def _safe_float(
+        self,
+        value: Any,
+        *,
+        default: float = 0.0,
+    ) -> float:
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            return default
+
+        if not math.isfinite(numeric_value):
+            return default
+
+        return numeric_value
+
+    def _safe_int(
+        self,
+        value: Any,
+        *,
+        default: int = 10**9,
+    ) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
 
     def _clamp(
         self,
@@ -279,11 +1011,21 @@ class FocusScalingService:
         except (TypeError, ValueError):
             return minimum
 
-        return max(minimum, min(numeric_value, maximum))
+        if not math.isfinite(numeric_value):
+            return minimum
+
+        return max(
+            minimum,
+            min(
+                numeric_value,
+                maximum,
+            ),
+        )
 
 
 _focus_scaling_service = FocusScalingService()
 
 
-def get_focus_scaling_service() -> FocusScalingService:
+def get_focus_scaling_service(
+) -> FocusScalingService:
     return _focus_scaling_service

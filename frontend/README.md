@@ -2,14 +2,8 @@
 
 React + Vite frontend for the Narrative Diff news comparison tool.
 
-The frontend compares two article sources and displays paragraph-level matches, labels, filters, evidence details, history, and export controls.
-
-## Requirements
-
-- Node.js LTS
-- npm
-- FastAPI backend on `http://localhost:8000`
-- Modern browser
+The page lets users compare two reports, inspect paragraph-level evidence, save
+results, and review account history when logged in.
 
 ## Run Locally
 
@@ -24,7 +18,8 @@ Open:
 http://localhost:5173
 ```
 
-Vite proxies `/api` and `/health` to the backend.
+The local Vite server proxies `/api` and `/health` to the backend at
+`http://localhost:8000`.
 
 ## Run With Docker
 
@@ -40,27 +35,20 @@ Open:
 http://localhost:5173
 ```
 
-## Source Structure
-
-```text
-src/
-  App.jsx
-  App.css
-  App.test.jsx
-  config/appConfig.js
-  utils/appHelpers.js
-  test/
-```
-
-## Features
+## Main Features
 
 - URL, pasted text, PDF, and Word input modes
-- Demo pair selectors
-- Streaming compare progress
+- Demo selectors for URL, Word, and text examples
+- Streaming progress while comparison runs
 - Friendly validation and backend error messages
-- Paragraph-level highlights and evidence panel
-- Relationship filters, summary, browser history, JSON export, and copy summary
-- Desktop side-by-side layout and mobile Article A/B tabs
+- Paragraph-level colour highlights
+- Side-by-side desktop article view and mobile Article A/B tabs
+- Evidence panel with backend-provided 0-20 scores
+- Backend-driven sorting and relationship filters
+- High-level summary card
+- Basic login/register modal
+- Database-backed account history for logged-in users
+- Local HTML report export
 
 ## Demo Inputs
 
@@ -70,14 +58,63 @@ Active demos are listed in:
 public/demo-files/index.json
 ```
 
-Each pair lives in its own folder with a `demo.json`.
+Each demo pair has its own folder and `demo.json`.
 
-To add a demo pair:
+To add a demo:
 
 1. Create a folder under `public/demo-files/`.
-2. Add a `demo.json` file.
-3. Add paired files if the sample is `upload` or `text`.
+2. Add a `demo.json`.
+3. Add paired files for text or upload demos.
 4. Add the `demo.json` path to `public/demo-files/index.json`.
+
+Selecting a demo fills the inputs only. It does not change the selected
+comparison focus.
+
+## Source Structure
+
+```text
+src/
+  App.jsx                         # page composition and state wiring
+  main.jsx
+  index.css                       # global variables and base browser styles
+  components/                     # reusable UI sections
+    AccountPanels.jsx
+    ArticleInputs.jsx
+    ArticlePanel.jsx
+    ComparisonResults.jsx
+    MatchExplanationPanel.jsx
+  hooks/                          # frontend state and workflow logic
+    useArticleInputs.js
+    useAuth.js
+    useBackendStatus.js
+    useComparison.js
+    useDemoSamples.js
+  services/                       # API calls
+    authService.js
+    compareService.js
+    demoService.js
+    healthService.js
+    historyService.js
+    uploadService.js
+  styles/                         # feature-specific CSS
+    index.css
+    layout.css
+    account.css
+    inputs.css
+    comparison.css
+    explanation-panel.css
+    utilities.css
+    responsive.css
+  utils/                          # formatting, validation, export helpers
+  test/                           # shared test setup and mock data
+  App.workflow.test.jsx
+  App.comparison.test.jsx
+  App.auth-history.test.jsx
+```
+
+`App.jsx` should stay focused on composing the page. New workflow logic should
+normally go into hooks, API calls into services, formatting/validation into
+utils, and visual changes into the relevant file under `styles/`.
 
 ## Validation
 
@@ -87,32 +124,26 @@ npm run lint
 npm run build
 ```
 
-Automated tests use Vitest and React Testing Library. Backend requests are mocked so tests do not depend on live news sites or NLP model runtime.
+Tests use Vitest and React Testing Library. Backend requests are mocked so the
+frontend tests do not depend on live news sites or NLP model runtime.
 
-Current coverage:
+Current coverage includes:
 
-- Main comparison page rendering
-- URL and pasted-text validation
-- About dialog
-- Demo pair loading
-- Mocked comparison result display and paragraph highlights
-- Evidence panel, relationship filters, copy summary, and JSON export
-- Mobile Article A/B tab state
-- Browser history
+- Rendering and form validation
+- Demo loading
+- Comparison result display
+- Paragraph highlighting and evidence panel
+- Backend-driven score display and sorting
+- Relationship filters
+- Login/logout and account history behaviour
+- HTML report export
+- Mobile tab state
 
-## Continuous Integration
+## Manual Checks
 
-Workflow:
-
-```text
-.github/workflows/full-stack-quality.yml
-```
-
-It runs frontend tests/lint/build, backend pytest with PostgreSQL, database schema setup, and Docker Compose config/build.
-
-## Manual Test Checklist
-
-- Run one URL, text, and Word demo.
-- Check invalid URL error handling.
-- Confirm progress, auto-scroll, highlights, filters, evidence panel, history, copy, and save.
+- Run one URL demo, one text demo, and one Word demo.
+- Try an invalid URL and confirm the message is readable.
+- Confirm compare progress, auto-scroll, highlights, filters, sorting, and the
+  evidence panel.
+- Log in, save a result, reopen history, restore it, then log out.
 - Check desktop and mobile layouts.

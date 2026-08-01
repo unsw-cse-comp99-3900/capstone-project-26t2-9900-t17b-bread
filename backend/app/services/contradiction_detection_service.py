@@ -14,22 +14,23 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_NLI_MODEL_NAME = "cross-encoder/nli-deberta-v3-base"
 
-DEFAULT_MIN_MAPPING_SCORE = 0.42
-DEFAULT_MIN_COSINE_SCORE = 0.30
-DEFAULT_STRONG_MAPPING_OVERRIDE = 0.58
-
 
 class ContradictionDetectionService:
     """
-    Run bidirectional Natural Language Inference on cross-article mappings.
+    Run bidirectional Natural Language Inference on candidate mappings.
 
-    Each eligible mapping is evaluated in both directions:
+    CandidateCrossMappingService has already performed the permissive
+    relevance screening and calculated mapping_score. This service does not
+    apply another score threshold.
+
+    Every candidate mapping with valid text is evaluated in both directions:
 
         Article A -> Article B
         Article B -> Article A
 
-    The service stores directional and combined NLI scores. Numeric differences,
-    casualty rules, and scope heuristics are intentionally ignored.
+    The service preserves all candidate-mapping metadata and adds directional
+    and combined NLI scores. Numeric differences, casualty rules, and scope
+    heuristics are intentionally ignored.
     """
 
     def __init__(
@@ -47,31 +48,31 @@ class ContradictionDetectionService:
 
     def analyse_mappings(
         self,
-        cross_mappings: list[dict[str, Any]],
+        candidate_mappings: list[dict[str, Any]],
         *,
         chunks_a: list[dict[str, Any]],
         chunks_b: list[dict[str, Any]],
-        min_mapping_score: float = DEFAULT_MIN_MAPPING_SCORE,
-        min_cosine_score: float = DEFAULT_MIN_COSINE_SCORE,
-        strong_mapping_override: float = DEFAULT_STRONG_MAPPING_OVERRIDE,
     ) -> list[dict[str, Any]]:
         """
-        Add bidirectional NLI scores to cross-article mappings.
+        Add bidirectional NLI scores to every candidate mapping.
 
-        Eligibility rule:
+        CandidateCrossMappingService has already:
 
-            (
-                mapping_score >= min_mapping_score
-                and cosine_score >= min_cosine_score
-            )
-            or
-            mapping_score >= strong_mapping_override
+        1. applied permissive content-relevance screening;
+        2. retained ordinary and strong-signal candidates;
+        3. calculated context_support, context_boost, and mapping_score.
 
-        Mappings that do not pass the relevance gate remain in the output with
-        ``nli_evaluated=False``.
+        This service therefore does not use mapping_score,
+        base_hybrid_score, hybrid_score, cosine_score, or bm25_score as an
+        additional NLI eligibility gate.
+
+        Every candidate mapping with resolvable text is evaluated in both
+        directions. A candidate remains in the output with
+        ``nli_evaluated=False`` only when one or both chunk texts cannot be
+        resolved.
         """
 
-        if not cross_mappings:
+        if not candidate_mappings:
             return []
 
         text_lookup = self._build_text_lookup(
@@ -79,19 +80,19 @@ class ContradictionDetectionService:
             chunks_b,
         )
 
-        enriched_mappings = [
+        # Copy each candidate so the input collection is not mutated.
+        # All CandidateCrossMappingService metadata is preserved.
+        enriched_candidates = [
             dict(mapping)
-            for mapping in cross_mappings
+            for mapping in candidate_mappings
         ]
 
         directional_pairs: list[tuple[str, str]] = []
-        eligible_indexes: list[int] = []
+        evaluated_indexes: list[int] = []
 
         missing_text_count = 0
-        low_relevance_count = 0
-        low_cosine_but_overridden_count = 0
 
-        for index, mapping in enumerate(enriched_mappings):
+        for index, mapping in enumerate(enriched_candidates):
             self._initialise_nli_fields(mapping)
 
             a_chunk_id = mapping.get("a_chunk_id")
@@ -101,37 +102,14 @@ class ContradictionDetectionService:
             b_text = text_lookup.get(str(b_chunk_id), "")
 
             if not a_text or not b_text:
+                mapping["nli_skip_reason"] = "missing_chunk_text"
                 missing_text_count += 1
                 continue
 
-            mapping_score = self._get_mapping_score(mapping)
-
-            cosine_score = self._safe_float(
-                mapping.get("cosine_score")
-            )
-
-            ordinary_eligibility = (
-                mapping_score >= min_mapping_score
-                and cosine_score >= min_cosine_score
-            )
-
-            strong_mapping_eligibility = (
-                mapping_score >= strong_mapping_override
-            )
-
-            if not (
-                ordinary_eligibility
-                or strong_mapping_eligibility
-            ):
-                low_relevance_count += 1
-                continue
-
-            if (
-                cosine_score < min_cosine_score
-                and strong_mapping_eligibility
-            ):
-                low_cosine_but_overridden_count += 1
-
+            # Every item reaching this service has already passed the
+            # permissive candidate-mapping stage. Run NLI for all candidates
+            # with valid text, including low mapping-score candidates retained
+            # through the strong-signal path.
             directional_pairs.extend(
                 [
                     (a_text, b_text),
@@ -139,29 +117,22 @@ class ContradictionDetectionService:
                 ]
             )
 
-            eligible_indexes.append(index)
+            evaluated_indexes.append(index)
 
         logger.info(
             (
-                "NLI mapping filter: total=%d, eligible_mappings=%d, "
-                "directional_pairs=%d, missing_text=%d, "
-                "low_relevance=%d, low_cosine_overridden=%d, "
-                "min_mapping_score=%.3f, min_cosine_score=%.3f, "
-                "strong_mapping_override=%.3f"
+                "Candidate NLI preparation: total_candidates=%d, "
+                "evaluated_candidates=%d, directional_pairs=%d, "
+                "missing_text=%d"
             ),
-            len(enriched_mappings),
-            len(eligible_indexes),
+            len(enriched_candidates),
+            len(evaluated_indexes),
             len(directional_pairs),
             missing_text_count,
-            low_relevance_count,
-            low_cosine_but_overridden_count,
-            min_mapping_score,
-            min_cosine_score,
-            strong_mapping_override,
         )
 
         if not directional_pairs:
-            return enriched_mappings
+            return enriched_candidates
 
         logits = self.model.predict(
             directional_pairs,
@@ -172,7 +143,7 @@ class ContradictionDetectionService:
         probabilities = self._softmax(logits)
 
         expected_prediction_count = (
-            len(eligible_indexes) * 2
+            len(evaluated_indexes) * 2
         )
 
         if len(probabilities) != expected_prediction_count:
@@ -182,18 +153,18 @@ class ContradictionDetectionService:
                 f"received {len(probabilities)}."
             )
 
-        for eligible_position, mapping_index in enumerate(
-            eligible_indexes
+        for evaluated_position, mapping_index in enumerate(
+            evaluated_indexes
         ):
             forward_scores = self._scores_by_label(
-                probabilities[eligible_position * 2]
+                probabilities[evaluated_position * 2]
             )
 
             reverse_scores = self._scores_by_label(
-                probabilities[eligible_position * 2 + 1]
+                probabilities[evaluated_position * 2 + 1]
             )
 
-            mapping = enriched_mappings[mapping_index]
+            mapping = enriched_candidates[mapping_index]
 
             self._apply_bidirectional_nli_scores(
                 mapping,
@@ -202,11 +173,15 @@ class ContradictionDetectionService:
             )
 
             mapping["nli_evaluated"] = True
+            mapping["nli_skip_reason"] = None
 
             logger.debug(
                 (
-                    "NLI mapping result: a_chunk_id=%s, b_chunk_id=%s, "
-                    "mapping_score=%.4f, cosine_score=%.4f, "
+                    "Candidate NLI result: "
+                    "a_chunk_id=%s, b_chunk_id=%s, "
+                    "candidate_reason=%s, "
+                    "base_hybrid_score=%.4f, mapping_score=%.4f, "
+                    "cosine_score=%.4f, bm25_score=%.4f, "
                     "forward_contradiction=%.4f, "
                     "reverse_contradiction=%.4f, "
                     "combined_contradiction=%.4f, "
@@ -217,9 +192,18 @@ class ContradictionDetectionService:
                 ),
                 mapping.get("a_chunk_id"),
                 mapping.get("b_chunk_id"),
-                self._get_mapping_score(mapping),
+                mapping.get("candidate_reason"),
+                self._safe_float(
+                    mapping.get("base_hybrid_score")
+                ),
+                self._safe_float(
+                    mapping.get("mapping_score")
+                ),
                 self._safe_float(
                     mapping.get("cosine_score")
+                ),
+                self._safe_float(
+                    mapping.get("bm25_score")
                 ),
                 mapping["forward_contradiction_score"],
                 mapping["reverse_contradiction_score"],
@@ -230,7 +214,7 @@ class ContradictionDetectionService:
                 mapping["nli_label"],
             )
 
-        return enriched_mappings
+        return enriched_candidates
 
     def _apply_bidirectional_nli_scores(
         self,
@@ -351,23 +335,7 @@ class ContradictionDetectionService:
 
         mapping["nli_label"] = "not_evaluated"
         mapping["nli_evaluated"] = False
-
-    def _get_mapping_score(
-        self,
-        mapping: dict[str, Any],
-    ) -> float:
-        """
-        Return mapping_score, falling back to hybrid_score when absent.
-        """
-
-        if "mapping_score" in mapping:
-            return self._safe_float(
-                mapping.get("mapping_score")
-            )
-
-        return self._safe_float(
-            mapping.get("hybrid_score")
-        )
+        mapping["nli_skip_reason"] = None
 
     def _resolve_label_names(
         self,
