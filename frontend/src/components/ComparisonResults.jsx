@@ -76,9 +76,9 @@ export function ComparisonSummaryCard({ matches, backendSummary }) {
   const summaryText = buildReadableComparisonSummary(matches, backendSummary)
   const stats = [
     { label: 'Matched pairs', value: backendSummary?.match_count ?? matches.length },
-    { label: 'Aligned', value: backendSummary?.aligned_count ?? counts.aligned },
+    { label: 'Similar', value: backendSummary?.aligned_count ?? counts.aligned },
     {
-      label: 'Partially aligned',
+      label: 'Partially similar',
       value: backendSummary?.partially_aligned_count ?? counts.partially_aligned,
     },
     { label: 'Divergent', value: backendSummary?.divergent_count ?? counts.divergent },
@@ -118,5 +118,37 @@ export function ComparisonSummaryCard({ matches, backendSummary }) {
         ))}
       </dl>
     </section>
+  )
+}
+
+export function RelevanceNoticeModal({ notice, isOpen, onClose }) {
+  if (!notice || !isOpen) {
+    return null
+  }
+
+  return (
+    <div className="relevance-modal-backdrop" role="presentation">
+      <section
+        className="relevance-modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="relevance-modal-title"
+        aria-describedby="relevance-modal-message"
+      >
+        <p className="eyebrow">Relevance check</p>
+        <h3 id="relevance-modal-title">Detailed comparison failed</h3>
+        <p id="relevance-modal-message">
+          {notice.message} Try another pair of articles about the same event if
+          you want paragraph-level highlights.
+        </p>
+        <button
+          className="save-results-button"
+          type="button"
+          onClick={onClose}
+        >
+          Close
+        </button>
+      </section>
+    </div>
   )
 }

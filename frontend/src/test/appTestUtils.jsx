@@ -39,7 +39,10 @@ export function textResponse(data, ok = true) {
   }
 }
 
-export function mockFrontendFetch({ historyItems = [] } = {}) {
+export function mockFrontendFetch({
+  historyItems = [],
+  comparisonPayload: nextComparisonPayload = comparisonPayload,
+} = {}) {
   global.fetch = vi.fn((url, options = {}) => {
     if (url === routes.health) {
       return Promise.resolve(jsonResponse({ status: 'ok' }))
@@ -95,7 +98,7 @@ export function mockFrontendFetch({ historyItems = [] } = {}) {
     }
 
     if (url === routes.compare || url === routes.compareFiles) {
-      return Promise.resolve(jsonResponse(comparisonPayload))
+      return Promise.resolve(jsonResponse(nextComparisonPayload))
     }
 
     return Promise.resolve(jsonResponse({}, false))

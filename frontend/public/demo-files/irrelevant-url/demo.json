@@ -1,0 +1,14 @@
+{
+  "id": "url-irrelevant",
+  "label": "URL",
+  "shortLabel": "Irrelevant",
+  "description": "Different-topic URL pair for relevance checking",
+  "kind": "url",
+  "focus": "general",
+  "articleA": {
+    "url": "https://www.aljazeera.com/amp/news/2024/1/15/volcano-erupts-in-iceland-sending-lava-into-fishing-town"
+  },
+  "articleB": {
+    "url": "https://www.globaltimes.cn/page/202406/1314604.shtml"
+  }
+}

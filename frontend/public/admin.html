@@ -53,7 +53,7 @@
                 </div>
 
                 <div>
-                    <h3 class="text-sm font-bold text-gray-600 uppercase tracking-wider mb-3">Aligned Text Chunks Preview</h3>
+                    <h3 class="text-sm font-bold text-gray-600 uppercase tracking-wider mb-3">Similar Text Chunks Preview</h3>
                     <div id="alignmentMatrixContainer" class="space-y-3">
                     </div>
                 </div>
@@ -189,11 +189,16 @@
             } else {
                 matrixContainer.innerHTML = matrixData.map((match, idx) => {
                     const scorePct = typeof match.score === 'number' ? `${(match.score * 100).toFixed(0)}%` : 'N/A';
+                    const relationshipLabel = {
+                        aligned: 'Similar',
+                        partially_aligned: 'Partially similar',
+                        divergent: 'Divergent'
+                    }[match.label] || 'Similar';
                     return `
                         <div class="bg-slate-50 border border-gray-200 rounded-lg p-3 text-xs shadow-sm">
                             <div class="flex justify-between items-center mb-2">
                                 <span class="font-bold text-gray-700">Match #${idx + 1} <span class="text-gray-400 font-normal">(Confidence: ${scorePct})</span></span>
-                                <span class="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-[10px] font-medium uppercase">${match.label || 'Aligned'}</span>
+                                <span class="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-[10px] font-medium uppercase">${relationshipLabel}</span>
                             </div>
                             <div class="grid grid-cols-2 gap-3">
                                 <div class="bg-white p-2.5 rounded border-l-4 border-orange-500 shadow-inner max-h-32 overflow-y-auto">

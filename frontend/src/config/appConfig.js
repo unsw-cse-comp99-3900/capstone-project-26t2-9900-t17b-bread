@@ -7,8 +7,8 @@ export const focusOptions = [
 ]
 
 export const relationshipOptions = [
-  { value: 'aligned', label: 'Aligned' },
-  { value: 'partially_aligned', label: 'Partially aligned' },
+  { value: 'aligned', label: 'Similar' },
+  { value: 'partially_aligned', label: 'Partially similar' },
   { value: 'divergent', label: 'Divergent' },
 ]
 
