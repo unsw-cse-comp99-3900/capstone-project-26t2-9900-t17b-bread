@@ -74,6 +74,41 @@ describe('Narrative Diff auth and history', () => {
     ).toBeInTheDocument()
   })
 
+  it('scrolls to the comparison view after restoring a saved result', async () => {
+    setLoggedInSession()
+    mockFrontendFetch({
+      historyItems: [
+        {
+          id: 7,
+          comparison_id: 100,
+          focus: 'general',
+          label:
+            'A volcano erupted near the Icelandic fishing town of Grindavik vs An eruption near Reykjavik forced Icelandic authorities',
+          saved_at: '2026-08-02T00:00:00.000Z',
+          articles: comparisonPayload.articles,
+          comparison: comparisonPayload.comparison,
+        },
+      ],
+    })
+
+    const user = userEvent.setup()
+    render(<App />)
+
+    await screen.findByText('Tester')
+    await user.click(screen.getByRole('button', { name: /history/i }))
+    const historyPanel = screen.getByRole('region', {
+      name: /comparison history/i,
+    })
+    const [historyItemButton] = within(historyPanel).getAllByRole('button', {
+      name: /volcano erupted/i,
+    })
+    await user.click(historyItemButton)
+
+    await waitFor(() => {
+      expect(window.HTMLElement.prototype.scrollIntoView).toHaveBeenCalled()
+    })
+  })
+
   it('shows specific login errors returned by the backend', async () => {
     const user = userEvent.setup()
     render(<App />)

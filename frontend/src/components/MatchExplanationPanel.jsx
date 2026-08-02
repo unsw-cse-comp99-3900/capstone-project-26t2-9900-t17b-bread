@@ -1,5 +1,6 @@
 import { relationshipOptions } from '../config/appConfig'
 import {
+  formatReasonCode,
   formatPublicScore,
   getMatchedText,
   getScoreDetailItems,
@@ -52,6 +53,12 @@ export function MatchExplanationPanel({
       </div>
 
       <p>{selectedMatch.explanation}</p>
+      {selectedMatch.reasonCode && (
+        <div className="reason-note">
+          <strong>Reason</strong>
+          <span>{formatReasonCode(selectedMatch.reasonCode)}</span>
+        </div>
+      )}
 
       <dl className="score-breakdown" aria-label="Score breakdown">
         {getScoreDetailItems(selectedMatch, scoreGuides).map((item) => (

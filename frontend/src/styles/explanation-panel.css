@@ -19,6 +19,25 @@
   margin: 14px 0 0;
 }
 
+.reason-note {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(248, 246, 239, 0.72);
+}
+
+.reason-note strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.reason-note span {
+  color: #475265;
+}
+
 .match-nav {
   display: flex;
   align-items: center;

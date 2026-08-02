@@ -12,6 +12,7 @@ import {
   loadAuthSession,
   saveAuthSession,
 } from '../utils/auth'
+import { dedupeHistoryItems } from '../utils/history'
 
 export function useAuth({
   onHistoryItemsChange,
@@ -40,7 +41,9 @@ export function useAuth({
     }
 
     const payload = await fetchHistory(token)
-    onHistoryItemsChange((payload.items ?? []).map(normalizeHistoryItem))
+    onHistoryItemsChange(
+      dedupeHistoryItems((payload.items ?? []).map(normalizeHistoryItem)),
+    )
   }
 
   useEffect(() => {
@@ -66,7 +69,9 @@ export function useAuth({
         setAuthSession(nextSession)
         saveAuthSession(nextSession)
         onHistoryItemsChange(
-          (historyPayload.items ?? []).map(normalizeHistoryItem),
+          dedupeHistoryItems(
+            (historyPayload.items ?? []).map(normalizeHistoryItem),
+          ),
         )
       } catch {
         if (!isActive) {

@@ -4,6 +4,7 @@ import {
   mockFrontendFetch,
   runTextComparison,
 } from './test/appTestUtils'
+import { irrelevantComparisonPayload } from './test/mockData'
 
 describe('Narrative Diff comparison results', () => {
   beforeEach(() => {
@@ -24,11 +25,35 @@ describe('Narrative Diff comparison results', () => {
     expect(screen.getByRole('combobox', { name: /sort by/i })).toHaveValue(
       'best_match',
     )
-    expect(screen.getByRole('checkbox', { name: /^Aligned 1$/i })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /^Similar 1$/i })).toBeChecked()
     expect(
-      screen.getByRole('checkbox', { name: /^Partially aligned 1$/i }),
+      screen.getByRole('checkbox', { name: /^Partially similar 1$/i }),
     ).toBeChecked()
     expect(screen.getByRole('checkbox', { name: /^Divergent 1$/i })).toBeChecked()
+  })
+
+  it('shows a clear message when articles fail the relevance check', async () => {
+    mockFrontendFetch({ comparisonPayload: irrelevantComparisonPayload })
+
+    const user = await runTextComparison()
+
+    const dialog = screen.getByRole('alertdialog')
+    expect(
+      within(dialog).getByText(/detailed comparison failed/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getAllByText(/not relevant enough for detailed comparison/i).length,
+    ).toBeGreaterThan(0)
+    expect(
+      screen.queryByRole('button', { name: /copy summary/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('combobox', { name: /sort by/i }),
+    ).not.toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: /close/i }))
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
   it('opens and closes the evidence panel from a highlighted paragraph', async () => {
@@ -45,6 +70,10 @@ describe('Narrative Diff comparison results', () => {
       screen.getByText(/both paragraphs describe the same eruption/i),
     ).toBeInTheDocument()
     const evidencePanel = screen.getByRole('complementary')
+    expect(within(evidencePanel).getByText(/^reason$/i)).toBeInTheDocument()
+    expect(
+      within(evidencePanel).getByText(/similar content but use different wording/i),
+    ).toBeInTheDocument()
     expect(within(evidencePanel).getByText(/match strength/i)).toBeInTheDocument()
     expect(within(evidencePanel).getAllByText(/18.0\/20/i).length).toBeGreaterThan(0)
     expect(
@@ -70,7 +99,7 @@ describe('Narrative Diff comparison results', () => {
       }),
     ).toBeInTheDocument()
 
-    await user.click(screen.getByRole('checkbox', { name: /^Aligned 1$/i }))
+    await user.click(screen.getByRole('checkbox', { name: /^Similar 1$/i }))
 
     expect(
       screen.queryByRole('button', {

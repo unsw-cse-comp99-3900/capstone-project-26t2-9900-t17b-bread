@@ -53,6 +53,61 @@ export function formatScoreLevel(level) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+export function formatReasonCode(reasonCode) {
+  if (!reasonCode) {
+    return ''
+  }
+
+  const reasonText = String(reasonCode).trim()
+  const readableReasons = {
+    high_semantic_overlap:
+      'The paragraphs cover very similar information.',
+    strong_semantic_match:
+      'The paragraphs discuss the same core content.',
+    semantic_match:
+      'The paragraphs discuss related content.',
+    semantic_match_with_lexical_difference:
+      'The paragraphs discuss similar content but use different wording.',
+    lexical_overlap:
+      'The paragraphs share important wording or named entities.',
+    partial_overlap:
+      'The paragraphs overlap in topic but differ in detail or emphasis.',
+    shared_entities:
+      'The paragraphs refer to the same people, places, organisations, or event details.',
+    framing_difference:
+      'The paragraphs cover related content with a different framing or emphasis.',
+    stance_or_framing_difference:
+      'The paragraphs describe related content with a different stance or framing.',
+    divergent_framing:
+      'The paragraphs describe related content but frame it differently.',
+    contradiction_detected:
+      'The paragraphs contain claims that may conflict with each other.',
+    low_similarity:
+      'The paragraphs only share limited context or weak similarity.',
+    strong_shared_content_with_additional_detail:
+      'The paragraphs share the same core content, while one side includes additional detail.',
+    strong_similarity_with_nli_entailment:
+      'The paragraphs make very similar claims about the same content.',
+    related_content_with_nli_neutrality:
+      'The paragraphs discuss related content, but neither paragraph clearly supports or conflicts with the other.',
+    accepted_mapping_with_moderate_alignment:
+      'The paragraphs are related enough to compare, but the connection is moderate.',
+    strong_similarity_with_partial_nli_support:
+      'The paragraphs are strongly related, but only part of the meaning matches directly.',
+    strong_similarity_without_meaningful_contradiction:
+      'The paragraphs are strongly related and do not show a clear conflict.',
+    bidirectional_nli_contradiction:
+      'The paragraphs appear to make conflicting claims.',
+    contradiction_is_dominant:
+      'The main relationship between these paragraphs is a possible conflict.',
+  }
+
+  return (
+    readableReasons[reasonText] ??
+    'The comparison model matched these paragraphs based on their content.'
+  )
+}
+
 export function getScoreGuide(scoreGuides, scoreKey) {
   return scoreGuides?.[scoreKey] ?? null
 }
@@ -172,6 +227,18 @@ export function buildReadableComparisonSummary(matches, backendSummary) {
   return `${matches.length} paragraph pair${
     matches.length === 1 ? '' : 's'
   } found. The visible evidence is mostly ${dominantLabel}, with ${remaining} also shown.`
+}
+
+export function buildRelevanceNotice(response) {
+  if (response?.relevant !== false) {
+    return null
+  }
+
+  return {
+    message:
+      response.message ||
+      'The articles are not relevant enough for detailed comparison.',
+  }
 }
 
 export function getSortingOptions(comparison) {
@@ -315,6 +382,7 @@ export function normalizeMatch(match, index) {
     bParagraphIndex,
     aTextPreview: match.a_text_preview ?? match.aTextPreview ?? null,
     bTextPreview: match.b_text_preview ?? match.bTextPreview ?? null,
+    reasonCode: match.reason_code ?? match.reasonCode ?? null,
     explanation:
       match.explanation ??
       'This match was returned by the comparison pipeline.',

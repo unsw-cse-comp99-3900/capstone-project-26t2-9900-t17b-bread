@@ -79,8 +79,10 @@ src/
   index.css                       # global variables and base browser styles
   components/                     # reusable UI sections
     AccountPanels.jsx
+    AppHeader.jsx
     ArticleInputs.jsx
     ArticlePanel.jsx
+    CompareInputSection.jsx
     ComparisonResults.jsx
     MatchExplanationPanel.jsx
   hooks/                          # frontend state and workflow logic
@@ -89,6 +91,7 @@ src/
     useBackendStatus.js
     useComparison.js
     useDemoSamples.js
+    useResultActions.js
   services/                       # API calls
     authService.js
     compareService.js

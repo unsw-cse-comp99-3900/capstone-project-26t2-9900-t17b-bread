@@ -134,6 +134,7 @@ export const comparisonPayload = {
         b_text_preview:
           'An eruption near Reykjavik forced Icelandic authorities to evacuate residents after weeks of warnings.',
         label: 'aligned',
+        reason_code: 'semantic_match_with_lexical_difference',
         match_strength: {
           score: 18,
           level: 'Very strong',
@@ -202,4 +203,21 @@ export const comparisonPayload = {
       },
     ],
   },
+}
+
+export const irrelevantComparisonPayload = {
+  focus: 'general',
+  comparison_id: null,
+  relevant: false,
+  relevance_score: 0.42,
+  cosine_relevance_score: 0.48,
+  bm25_relevance_score: 0.28,
+  relevance_threshold: 0.6,
+  message: 'The articles are not relevant enough for detailed comparison.',
+  processing: {
+    message: 'The articles are not relevant enough for detailed comparison.',
+  },
+  errors: [],
+  articles: comparisonPayload.articles,
+  comparison: null,
 }

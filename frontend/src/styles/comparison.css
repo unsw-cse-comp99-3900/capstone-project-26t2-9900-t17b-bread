@@ -85,6 +85,41 @@
   font-weight: 850;
 }
 
+.relevance-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(24, 36, 58, 0.36);
+}
+
+.relevance-modal {
+  width: min(560px, 100%);
+  padding: 26px;
+  border: 1px solid #f0c58a;
+  border-radius: 18px;
+  background: #fff7e8;
+  box-shadow: 0 24px 80px rgba(24, 36, 58, 0.24);
+}
+
+.relevance-modal h3 {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 24px;
+}
+
+.relevance-modal p:not(.eyebrow) {
+  margin: 0 0 20px;
+  color: #4b5568;
+  line-height: 1.55;
+}
+
+.relevance-modal .save-results-button {
+  min-width: 96px;
+}
+
 .comparison-filters {
   display: flex;
   align-items: center;

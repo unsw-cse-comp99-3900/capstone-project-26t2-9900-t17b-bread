@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { createCompareRequest, streamComparison } from '../services/compareService'
 import {
+  buildRelevanceNotice,
   getComparisonMatches,
   getCompareReadinessMessage,
   getDefaultSortKey,
@@ -31,6 +32,7 @@ export function useComparison({
   const [articles, setArticles] = useState([])
   const [comparison, setComparison] = useState(null)
   const [comparisonId, setComparisonId] = useState(null)
+  const [relevanceNotice, setRelevanceNotice] = useState(null)
   const [visibleLabels, setVisibleLabels] = useState(getInitialFilters)
   const [selectedMatchId, setSelectedMatchId] = useState(null)
   const [selectedSort, setSelectedSort] = useState('')
@@ -41,6 +43,7 @@ export function useComparison({
     setArticles([])
     setComparison(null)
     setComparisonId(null)
+    setRelevanceNotice(null)
     setSelectedMatchId(null)
     setSelectedSort('')
     setActiveMobileArticle('A')
@@ -53,6 +56,7 @@ export function useComparison({
     setProgress(null)
     setArticles([])
     setComparison(null)
+    setRelevanceNotice(null)
     setSelectedMatchId(null)
     setActiveMobileArticle('A')
     setApiErrors([])
@@ -76,6 +80,7 @@ export function useComparison({
     setArticles([])
     setComparison(null)
     setComparisonId(null)
+    setRelevanceNotice(null)
     setVisibleLabels(getInitialFilters())
     setSelectedMatchId(null)
     setActiveMobileArticle('A')
@@ -114,6 +119,7 @@ export function useComparison({
     setArticles([])
     setComparison(null)
     setComparisonId(null)
+    setRelevanceNotice(null)
     setSelectedMatchId(null)
     setSelectedSort('')
     setActiveMobileArticle('A')
@@ -138,12 +144,14 @@ export function useComparison({
       const returnedArticles = data.articles ?? []
       const returnedErrors = data.errors ?? []
       const backendComparison = data.comparison ?? null
+      const backendRelevanceNotice = buildRelevanceNotice(data)
       const hasBackendMatches = getComparisonMatches(backendComparison).length > 0
 
       setArticles(returnedArticles)
       setApiErrors(returnedErrors)
       setComparison(backendComparison)
       setComparisonId(data.comparison_id ?? null)
+      setRelevanceNotice(backendRelevanceNotice)
       setSelectedMatchId(null)
       setSelectedSort(getDefaultSortKey(backendComparison))
       setActiveMobileArticle('A')
@@ -154,7 +162,9 @@ export function useComparison({
       })
 
       if (returnedArticles.length > 0 && returnedErrors.length === 0) {
-        if (hasBackendMatches) {
+        if (backendRelevanceNotice) {
+          setStatusMessage(backendRelevanceNotice.message)
+        } else if (hasBackendMatches) {
           if (authToken) {
             await refreshAccountHistory(authToken)
           }
@@ -235,6 +245,7 @@ export function useComparison({
     setArticles(item.articles ?? [])
     setComparison(item.comparison ?? null)
     setComparisonId(item.comparison_id ?? null)
+    setRelevanceNotice(buildRelevanceNotice(item))
     setFocus(item.focus ?? 'general')
     setSelectedMatchId(null)
     setSelectedSort(getDefaultSortKey(item.comparison))
@@ -244,6 +255,10 @@ export function useComparison({
     setProgress(null)
     setStatusMessage(`Restored comparison from ${new Date(item.saved_at).toLocaleString()}.`)
     setIsHistoryOpen(false)
+
+    if ((item.articles ?? []).length > 0) {
+      window.requestAnimationFrame(scrollToResults)
+    }
   }
 
   return {
@@ -265,6 +280,7 @@ export function useComparison({
     loadDemoSample,
     progress,
     readinessMessage,
+    relevanceNotice,
     resetComparisonWorkspace,
     selectedMatch,
     selectedMatchId,

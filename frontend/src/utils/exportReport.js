@@ -1,6 +1,13 @@
 import { relationshipOptions } from '../config/appConfig'
 import { escapeHtml, getHistoryArticleTitle, getUrlHost, hasExternalArticleUrl } from './article'
-import { formatPublicScore, formatSummaryScore, getMatchCounts, getScoreDetailItems, getFocusLabel } from './comparison'
+import {
+  formatPublicScore,
+  formatReasonCode,
+  formatSummaryScore,
+  getMatchCounts,
+  getScoreDetailItems,
+  getFocusLabel,
+} from './comparison'
 
 export function buildComparisonSummary({
   focus,
@@ -15,8 +22,8 @@ export function buildComparisonSummary({
     `Focus: ${getFocusLabel(focus)}`,
     `Article A: ${getHistoryArticleTitle(articleA, 'Article A')}`,
     `Article B: ${getHistoryArticleTitle(articleB, 'Article B')}`,
-    `Aligned: ${counts.aligned}`,
-    `Partially aligned: ${counts.partially_aligned}`,
+    `Similar: ${counts.aligned}`,
+    `Partially similar: ${counts.partially_aligned}`,
     `Divergent: ${counts.divergent}`,
   ]
 
@@ -30,6 +37,9 @@ export function buildComparisonSummary({
       }`,
       `Explanation: ${selectedMatch.explanation}`,
     )
+    if (selectedMatch.reasonCode) {
+      lines.push(`Reason: ${formatReasonCode(selectedMatch.reasonCode)}`)
+    }
   }
 
   return lines.join('\n')
@@ -107,6 +117,11 @@ export function buildHtmlReport({
                 <em>Match ${escapeHtml(formatPublicScore(match, 'match_strength'))}</em>
               </div>
               <p class="explanation">${escapeHtml(match.explanation ?? 'No explanation available.')}</p>
+              ${
+                match.reasonCode
+                  ? `<p class="reason"><strong>Reason:</strong> ${escapeHtml(formatReasonCode(match.reasonCode))}</p>`
+                  : ''
+              }
               <dl class="score-list">${scoreDetails}</dl>
               <div class="evidence-grid">
                 <section>
@@ -368,6 +383,17 @@ export function buildHtmlReport({
       color: #4b596f;
       line-height: 1.55;
     }
+    .reason {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border: 1px solid #e2dccf;
+      border-radius: 12px;
+      color: #4b596f;
+      background: #f8f6ef;
+    }
+    .reason strong {
+      color: #172238;
+    }
     .score-list {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -497,8 +523,8 @@ export function buildHtmlReport({
 
       <section class="summary" aria-label="Relationship summary">
         <div class="metric"><span>Total pairs</span><strong>${totalPairs}</strong></div>
-        <div class="metric"><span>Aligned</span><strong>${counts.aligned}</strong></div>
-        <div class="metric"><span>Partially aligned</span><strong>${counts.partially_aligned}</strong></div>
+        <div class="metric"><span>Similar</span><strong>${counts.aligned}</strong></div>
+        <div class="metric"><span>Partially similar</span><strong>${counts.partially_aligned}</strong></div>
         <div class="metric"><span>Divergent</span><strong>${counts.divergent}</strong></div>
       </section>
 
