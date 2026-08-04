@@ -9,13 +9,13 @@ explanations in the frontend.
 
 ## Repository Layout
 
-| Path | Description |
-|------|-------------|
-| `frontend/` | React + Vite user interface |
-| `backend/` | FastAPI backend and NLP comparison pipeline |
-| `database/` | PostgreSQL schema and database notes |
-| `docker/` | Dockerfiles and full-stack Compose setup |
-| `.github/workflows/` | Automated frontend, backend, and Docker checks |
+| Path                 | Description                                      |
+| -------------------- | ------------------------------------------------ |
+| `frontend/`          | React + Vite user interface                      |
+| `backend/`           | FastAPI backend and NLP comparison pipeline      |
+| `database/`          | PostgreSQL schema and database notes             |
+| `docker/`            | Dockerfiles and full-stack Compose setup         |
+| `.github/workflows/` | Automated frontend, backend, and Docker checks   |
 
 ## Run With Docker
 
@@ -72,6 +72,7 @@ application file.
 ## Validation
 
 Frontend:
+
 ```powershell
 cd frontend
 npm test
@@ -80,6 +81,7 @@ npm run build
 ```
 
 Backend/database:
+
 ```powershell
 cd backend
 python scripts/check_db.py --init
@@ -87,6 +89,7 @@ python -m pytest tests/ -v
 ```
 
 Docker:
+
 ```powershell
 docker compose -f docker/docker-compose.yml config
 docker compose -f docker/docker-compose.yml build
