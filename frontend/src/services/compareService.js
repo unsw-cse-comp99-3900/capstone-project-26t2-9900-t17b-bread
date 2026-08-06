@@ -1,5 +1,10 @@
 import { authHeaders } from '../utils/auth'
-import { parseApiError, parseEventStream } from '../utils/errors'
+import { parseResponseErrorMessage } from '../utils/api'
+import { createApiError, parseApiError, parseEventStream } from '../utils/errors'
+
+const COMPARISON_TIMEOUT_MS = 60_000
+const COMPARISON_TIMEOUT_MESSAGE =
+  'This comparison is taking too long. The articles may be too long for one run. Please split them into smaller sections and try again.'
 
 export function createCompareRequest({ focus, authToken, articleA, articleB }) {
   const usesUpload = articleA.mode === 'upload' || articleB.mode === 'upload'
@@ -62,12 +67,42 @@ export function createCompareRequest({ focus, authToken, articleA, articleB }) {
 }
 
 export async function streamComparison(request, onProgress) {
-  const response = await fetch(request.endpoint, request.options)
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => {
+    controller.abort()
+  }, COMPARISON_TIMEOUT_MS)
 
-  if (!response.ok) {
-    const errorPayload = await response.json()
-    throw new Error(parseApiError(errorPayload))
+  try {
+    const response = await fetch(request.endpoint, {
+      ...request.options,
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      const text = await response.text()
+      let errorPayload = null
+
+      try {
+        errorPayload = JSON.parse(text)
+      } catch {
+        throw createApiError(
+          'The comparison service returned an unexpected result. Please try again, or check that the service is running.',
+        )
+      }
+
+      throw createApiError(
+        parseApiError(errorPayload) || parseResponseErrorMessage(errorPayload),
+        errorPayload?.detail?.code ?? errorPayload?.code,
+      )
+    }
+
+    return await parseEventStream(response, onProgress)
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw createApiError(COMPARISON_TIMEOUT_MESSAGE, 'comparison_timeout')
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeoutId)
   }
-
-  return parseEventStream(response, onProgress)
 }

@@ -26,3 +26,19 @@ export function isValidUsername(value) {
   return /^[a-zA-Z0-9_]{3,20}$/.test(username)
 }
 
+export function isValidEmail(value) {
+  const email = value.trim()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
+export function isValidVerificationCode(value) {
+  return /^\d{6}$/.test(value.trim())
+}
+
+export function isValidPassword(value) {
+  return value.length >= 8 && /[a-zA-Z]/.test(value) && /\d/.test(value)
+}
+
+export const passwordRequirementMessage =
+  'Use at least 8 characters with at least one letter and one number.'
+

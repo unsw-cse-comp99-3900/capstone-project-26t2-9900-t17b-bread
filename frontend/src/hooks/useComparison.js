@@ -33,6 +33,7 @@ export function useComparison({
   const [comparison, setComparison] = useState(null)
   const [comparisonId, setComparisonId] = useState(null)
   const [relevanceNotice, setRelevanceNotice] = useState(null)
+  const [timeoutNotice, setTimeoutNotice] = useState(null)
   const [visibleLabels, setVisibleLabels] = useState(getInitialFilters)
   const [selectedMatchId, setSelectedMatchId] = useState(null)
   const [selectedSort, setSelectedSort] = useState('')
@@ -44,6 +45,7 @@ export function useComparison({
     setComparison(null)
     setComparisonId(null)
     setRelevanceNotice(null)
+    setTimeoutNotice(null)
     setSelectedMatchId(null)
     setSelectedSort('')
     setActiveMobileArticle('A')
@@ -57,6 +59,7 @@ export function useComparison({
     setArticles([])
     setComparison(null)
     setRelevanceNotice(null)
+    setTimeoutNotice(null)
     setSelectedMatchId(null)
     setActiveMobileArticle('A')
     setApiErrors([])
@@ -64,7 +67,7 @@ export function useComparison({
 
     try {
       await loadDemoSampleInputs(sample)
-      setStatusMessage(`${sample.label} demo inputs loaded. Click Compare articles to run the backend.`)
+      setStatusMessage(`${sample.label} demo inputs loaded. Click Compare articles to start.`)
     } catch (error) {
       setStatusMessage(`Could not load demo inputs. ${error.message}`)
     } finally {
@@ -81,6 +84,7 @@ export function useComparison({
     setComparison(null)
     setComparisonId(null)
     setRelevanceNotice(null)
+    setTimeoutNotice(null)
     setVisibleLabels(getInitialFilters())
     setSelectedMatchId(null)
     setActiveMobileArticle('A')
@@ -120,6 +124,7 @@ export function useComparison({
     setComparison(null)
     setComparisonId(null)
     setRelevanceNotice(null)
+    setTimeoutNotice(null)
     setSelectedMatchId(null)
     setSelectedSort('')
     setActiveMobileArticle('A')
@@ -178,7 +183,7 @@ export function useComparison({
         }
       } else if (returnedArticles.length > 0) {
         setStatusMessage(
-          'Partial backend result loaded. One article could not be processed.',
+          'Partial result loaded. One article could not be processed.',
         )
       } else {
         setStatusMessage('These articles could not be processed.')
@@ -189,6 +194,15 @@ export function useComparison({
       }
     } catch (error) {
       clearComparisonResult()
+      if (error.code === 'comparison_timeout') {
+        setTimeoutNotice({
+          eyebrow: 'Time limit reached',
+          title: 'Comparison took too long',
+          message:
+            'The articles may be too long for one run. Please split them into smaller sections and try again.',
+          action: 'Try comparing shorter sections of the articles.',
+        })
+      }
       setStatusMessage(`Could not complete the comparison. ${error.message}`)
     } finally {
       setIsLoading(false)
@@ -246,6 +260,7 @@ export function useComparison({
     setComparison(item.comparison ?? null)
     setComparisonId(item.comparison_id ?? null)
     setRelevanceNotice(buildRelevanceNotice(item))
+    setTimeoutNotice(null)
     setFocus(item.focus ?? 'general')
     setSelectedMatchId(null)
     setSelectedSort(getDefaultSortKey(item.comparison))
@@ -281,6 +296,8 @@ export function useComparison({
     progress,
     readinessMessage,
     relevanceNotice,
+    timeoutNotice,
+    setTimeoutNotice,
     resetComparisonWorkspace,
     selectedMatch,
     selectedMatchId,

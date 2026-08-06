@@ -1,3 +1,4 @@
+import asyncio
 import io
 
 import pytest
@@ -5,7 +6,9 @@ from docx import Document
 from fastapi.testclient import TestClient
 from pypdf import PdfWriter
 
+from app.api.routes import compare as compare_route
 from app.main import app
+from app.config import get_settings
 from app.services import fetch_service
 from app.services.errors import ErrorCode
 from app.services.paywall_detection import detect_html_issue
@@ -84,8 +87,8 @@ def test_compare_with_mocked_fetch(monkeypatch):
     assert data["processing"]["total_elapsed_seconds"] >= 0
     assert data["processing"]["message"]
     for article in data["articles"]:
-        assert article["sentences"], "expected prepared sentences"
-        joined = " ".join(s["text"] for s in article["sentences"])
+        assert article["paragraphs"], "expected prepared article paragraphs"
+        joined = " ".join(article["paragraphs"])
         assert "Advertisement" not in joined
         assert "Copyright" not in joined
 
@@ -229,6 +232,57 @@ def test_compare_reports_empty_text_error():
     assert len(data["errors"]) == 1
     assert data["errors"][0]["code"] == ErrorCode.TEXT_TOO_SHORT.value
     assert data["errors"][0]["article_ref"] == "A"
+
+
+def test_compare_timeout_returns_structured_error(monkeypatch):
+    async def slow_pipeline(*_args, **_kwargs):
+        await asyncio.sleep(1)
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "comparison_timeout_seconds", 0.01)
+    monkeypatch.setattr(compare_route, "process_pair_inputs_with_comparison", slow_pipeline)
+
+    payload = {
+        "article_a_text": ARTICLE_A_TEXT,
+        "article_b_text": ARTICLE_B_TEXT,
+    }
+    response = client.post("/api/compare", json=payload)
+
+    assert response.status_code == 408
+    assert response.json()["detail"]["code"] == "comparison_timeout"
+
+
+def test_compare_stream_timeout_returns_error_event(monkeypatch):
+    async def slow_pipeline(*_args, **_kwargs):
+        await asyncio.sleep(1)
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "comparison_timeout_seconds", 0.01)
+    monkeypatch.setattr(compare_route, "process_pair_inputs_with_comparison", slow_pipeline)
+
+    payload = {
+        "article_a_text": ARTICLE_A_TEXT,
+        "article_b_text": ARTICLE_B_TEXT,
+    }
+
+    with client.stream("POST", "/api/compare/stream", json=payload) as response:
+        body = response.read().decode("utf-8")
+
+    assert response.status_code == 200
+    assert "event: error" in body
+    assert "comparison_timeout" in body
+
+
+def test_specific_article_errors_are_not_replaced_by_timeout():
+    payload = {
+        "article_a_text": "short",
+        "article_b_text": ARTICLE_B_TEXT,
+    }
+    response = client.post("/api/compare", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["errors"][0]["code"] == ErrorCode.TEXT_TOO_SHORT.value
 
 
 def test_compare_files_with_pasted_text_form(monkeypatch):

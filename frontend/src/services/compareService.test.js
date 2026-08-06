@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest'
-import { createCompareRequest } from './compareService'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createCompareRequest, streamComparison } from './compareService'
 
 describe('compareService', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
   it('creates a JSON compare request for URL and pasted text inputs', () => {
     const request = createCompareRequest({
       focus: 'general',
@@ -46,5 +51,36 @@ describe('compareService', () => {
     expect(request.options.headers.Authorization).toBe('Bearer token-1')
     expect(request.options.body.get('article_a_file')).toBe(file)
     expect(request.options.body.get('article_b_url')).toBe('https://example.com/b')
+  })
+
+  it('stops comparisons that exceed the one minute limit', async () => {
+    vi.useFakeTimers()
+    global.fetch = vi.fn((_endpoint, options) =>
+      new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        })
+      }),
+    )
+
+    const request = createCompareRequest({
+      focus: 'general',
+      authToken: '',
+      articleA: {
+        mode: 'text',
+        text: 'Long article A text',
+      },
+      articleB: {
+        mode: 'text',
+        text: 'Long article B text',
+      },
+    })
+
+    const expectation = expect(streamComparison(request, vi.fn())).rejects.toThrow(
+      /too long/i,
+    )
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    await expectation
   })
 })

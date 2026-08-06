@@ -37,6 +37,7 @@ services:
       ]
 
   backend:
+    image: narrative-diff-backend:latest
     build:
       context: ..
       dockerfile: docker/backend.Dockerfile
@@ -46,6 +47,16 @@ services:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/postgres
       TESSERACT_CMD: tesseract
       OCR_LANGUAGES: eng
+      HF_HOME: /opt/huggingface
+      SENTENCE_TRANSFORMERS_HOME: /opt/sentence-transformers
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-noreply@narrative-diff.local}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-true}
+      AUTH_CODE_COOLDOWN_SECONDS: ${AUTH_CODE_COOLDOWN_SECONDS:-60}
+      AUTH_TOKEN_TTL_HOURS: ${AUTH_TOKEN_TTL_HOURS:-24}
     ports:
       - "8000:8000"
     depends_on:
@@ -53,12 +64,12 @@ services:
         condition: service_completed_successfully
 
   admin-backend:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    image: narrative-diff-backend:latest
     container_name: narrative-diff-admin-backend
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/postgres
+      HF_HOME: /opt/huggingface
+      SENTENCE_TRANSFORMERS_HOME: /opt/sentence-transformers
     command: ["uvicorn", "admin_server:app", "--host", "0.0.0.0", "--port", "8001"]
     ports:
       - "8001:8001"
@@ -67,6 +78,7 @@ services:
         condition: service_completed_successfully
 
   frontend:
+    image: narrative-diff-frontend:latest
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile

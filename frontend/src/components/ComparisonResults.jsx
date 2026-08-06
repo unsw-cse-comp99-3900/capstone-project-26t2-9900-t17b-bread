@@ -126,6 +126,13 @@ export function RelevanceNoticeModal({ notice, isOpen, onClose }) {
     return null
   }
 
+  const title = notice.title ?? 'Detailed comparison failed'
+  const eyebrow = notice.eyebrow ?? 'Relevance check'
+  const message =
+    notice.action == null
+      ? `${notice.message} Try another pair of articles about the same event if you want paragraph-level highlights.`
+      : notice.message
+
   return (
     <div className="relevance-modal-backdrop" role="presentation">
       <section
@@ -135,12 +142,10 @@ export function RelevanceNoticeModal({ notice, isOpen, onClose }) {
         aria-labelledby="relevance-modal-title"
         aria-describedby="relevance-modal-message"
       >
-        <p className="eyebrow">Relevance check</p>
-        <h3 id="relevance-modal-title">Detailed comparison failed</h3>
-        <p id="relevance-modal-message">
-          {notice.message} Try another pair of articles about the same event if
-          you want paragraph-level highlights.
-        </p>
+        <p className="eyebrow">{eyebrow}</p>
+        <h3 id="relevance-modal-title">{title}</h3>
+        <p id="relevance-modal-message">{message}</p>
+        {notice.action && <p>{notice.action}</p>}
         <button
           className="save-results-button"
           type="button"

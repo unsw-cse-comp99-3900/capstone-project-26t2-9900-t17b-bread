@@ -1,0 +1,16 @@
+{
+  "id": "text-timeout",
+  "label": "Text",
+  "shortLabel": "Long text timeout test",
+  "description": "Manual timeout test using repeated pasted text",
+  "kind": "text",
+  "focus": "general",
+  "articleA": {
+    "filePath": "/demo-files/volcano-text/1a.txt",
+    "repeatCount": 12
+  },
+  "articleB": {
+    "filePath": "/demo-files/volcano-text/1b.txt",
+    "repeatCount": 12
+  }
+}

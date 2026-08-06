@@ -15,14 +15,48 @@ export function loginUser({ username, password }) {
   }).then(parseJsonResponse)
 }
 
-export function registerUser({ username, password, displayName }) {
-  return fetch('/api/auth/register', {
+export function requestRegisterCode({ username, email }) {
+  return fetch('/api/auth/register/request-code', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, email }),
+  }).then(parseJsonResponse)
+}
+
+export function verifyRegisterCode({
+  username,
+  email,
+  password,
+  verificationCode,
+}) {
+  return fetch('/api/auth/register/verify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       username,
+      email,
       password,
-      display_name: displayName,
+      code: verificationCode,
+    }),
+  }).then(parseJsonResponse)
+}
+
+export function requestPasswordResetCode({ email }) {
+  return fetch('/api/auth/password/request-reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  }).then(parseJsonResponse)
+}
+
+export function confirmPasswordReset({ email, verificationCode, newPassword }) {
+  return fetch('/api/auth/password/confirm-reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      code: verificationCode,
+      new_password: newPassword,
     }),
   }).then(parseJsonResponse)
 }

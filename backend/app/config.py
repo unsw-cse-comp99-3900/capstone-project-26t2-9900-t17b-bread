@@ -42,6 +42,21 @@ class Settings(BaseSettings):
     # Uploaded documents (PDF / Word)
     upload_max_bytes: int = 10_000_000
 
+    # Whole comparison request timeout. Specific URL/file errors should still
+    # return first; this is only the final guard for very long comparisons.
+    comparison_timeout_seconds: float = 60.0
+
+    # Email verification. If smtp_host is empty, auth verification codes are
+    # logged and returned as dev_code for local development only.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "noreply@narrative-diff.local"
+    smtp_use_tls: bool = True
+    auth_code_cooldown_seconds: int = 60
+    auth_token_ttl_hours: int = 24
+
     # OCR for image-based (scanned) PDFs
     # A PDF is treated as image-based (scanned) when its directly extractable
     # text is below this many characters per page on average.

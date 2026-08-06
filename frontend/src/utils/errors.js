@@ -20,8 +20,16 @@ export function parseApiError(errorPayload) {
   return (
     errorPayload?.detail?.message ??
     errorPayload?.error?.message ??
-    'The backend could not complete the comparison.'
+    'The comparison could not be completed.'
   )
+}
+
+export function createApiError(message, code) {
+  const error = new Error(message)
+  if (code) {
+    error.code = code
+  }
+  return error
 }
 
 export async function parseEventStream(response, onProgress) {
@@ -53,15 +61,24 @@ export async function parseEventStream(response, onProgress) {
       }
 
       const event = eventLine.replace('event:', '').trim()
-      const data = JSON.parse(dataLine.replace('data:', '').trim())
+      let data
+
+      try {
+        data = JSON.parse(dataLine.replace('data:', '').trim())
+      } catch {
+        throw new Error(
+          'The comparison service returned an unexpected progress update. Please try again.',
+        )
+      }
 
       if (event === 'progress') {
         onProgress(data)
       }
 
       if (event === 'error') {
-        throw new Error(
-          data?.message ?? 'The backend could not complete the request.',
+        throw createApiError(
+          data?.message ?? 'The comparison could not be completed.',
+          data?.code,
         )
       }
 
@@ -71,7 +88,7 @@ export async function parseEventStream(response, onProgress) {
     }
   }
 
-  throw new Error('The backend stream ended before returning a result.')
+  throw new Error('The comparison ended before returning a result.')
 }
 
 export function clearFieldError(errors, fieldName) {

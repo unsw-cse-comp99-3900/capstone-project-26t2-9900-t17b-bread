@@ -185,7 +185,7 @@
             }
 
             if (!matrixData || !Array.isArray(matrixData) || matrixData.length === 0) {
-                matrixContainer.innerHTML = `<p class="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-lg border border-dashed">No text chunks alignment matrix details available for this record.</p>`;
+                matrixContainer.innerHTML = `<p class="text-xs text-gray-400 italic bg-gray-50 p-3 rounded-lg border border-dashed">No similar text chunk details available for this record.</p>`;
             } else {
                 matrixContainer.innerHTML = matrixData.map((match, idx) => {
                     const scorePct = typeof match.score === 'number' ? `${(match.score * 100).toFixed(0)}%` : 'N/A';

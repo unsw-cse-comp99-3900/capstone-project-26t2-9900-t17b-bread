@@ -7,6 +7,7 @@ import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
+from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 
@@ -35,14 +36,19 @@ async def stream_with_progress(
 
     try:
         result = await task
-    except Exception as exc:  # noqa: BLE001 - surface any runner failure to client
+    except HTTPException as exc:
+        detail = exc.detail
+        if isinstance(detail, dict):
+            payload = detail
+        else:
+            payload = {"message": str(detail)}
+        yield sse_event("error", payload)
+        return
+    except Exception:  # noqa: BLE001 - surface any runner failure to client
         yield sse_event(
             "error",
             {
-                "message": (
-                    "The server could not complete the request. "
-                    f"{type(exc).__name__}: {exc}"
-                ),
+                "message": "The comparison could not be completed. Please try again.",
             },
         )
         return
