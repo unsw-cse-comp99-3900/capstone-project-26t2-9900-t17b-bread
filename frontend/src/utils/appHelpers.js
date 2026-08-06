@@ -92,12 +92,21 @@ export async function createFileFromDemoAsset({ filePath, fileName, mimeType }) 
   return new File([blob], fileName, { type: mimeType })
 }
 
-export async function readTextDemoAsset({ filePath }) {
+export async function readTextDemoAsset({ filePath, repeatCount = 1 }) {
   const response = await fetch(filePath)
 
   if (!response.ok) {
     throw new Error(`Could not load ${filePath}.`)
   }
 
-  return response.text()
+  const text = await response.text()
+  const safeRepeatCount = Number.isFinite(repeatCount)
+    ? Math.max(1, Math.floor(repeatCount))
+    : 1
+
+  if (safeRepeatCount === 1) {
+    return text
+  }
+
+  return Array.from({ length: safeRepeatCount }, () => text.trim()).join('\n\n')
 }

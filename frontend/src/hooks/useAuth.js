@@ -1,18 +1,43 @@
 import { useEffect, useState } from 'react'
 import {
+  confirmPasswordReset,
   fetchCurrentUser,
   loginUser,
   logoutUser,
-  registerUser,
+  requestPasswordResetCode,
+  requestRegisterCode,
+  verifyRegisterCode,
 } from '../services/authService'
 import { fetchHistory } from '../services/historyService'
 import { normalizeHistoryItem } from '../utils/article'
 import {
+  isValidEmail,
+  isValidPassword,
   isValidUsername,
+  isValidVerificationCode,
   loadAuthSession,
+  passwordRequirementMessage,
   saveAuthSession,
 } from '../utils/auth'
 import { dedupeHistoryItems } from '../utils/history'
+
+function createEmptyAuthForm() {
+  return {
+    username: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+    verificationCode: '',
+    newPassword: '',
+    confirmNewPassword: '',
+  }
+}
+
+function formatVerificationStatus(payload, fallbackMessage) {
+  return payload?.message ?? fallbackMessage
+}
+
+const resendCooldownSeconds = 60
 
 export function useAuth({
   onHistoryItemsChange,
@@ -23,16 +48,27 @@ export function useAuth({
   const [authSession, setAuthSession] = useState(loadAuthSession)
   const [isAuthOpen, setIsAuthOpen] = useState(false)
   const [authMode, setAuthMode] = useState('login')
-  const [authForm, setAuthForm] = useState({
-    displayName: '',
-    username: '',
-    password: '',
-  })
+  const [authForm, setAuthForm] = useState(createEmptyAuthForm)
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState('')
+  const [developmentVerificationCode, setDevelopmentVerificationCode] = useState('')
   const [authError, setAuthError] = useState('')
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false)
+  const [resendSecondsRemaining, setResendSecondsRemaining] = useState(0)
 
   const authToken = authSession?.accessToken ?? ''
   const currentUser = authSession?.user ?? null
+
+  useEffect(() => {
+    if (resendSecondsRemaining <= 0) {
+      return undefined
+    }
+
+    const timerId = window.setTimeout(() => {
+      setResendSecondsRemaining((seconds) => Math.max(0, seconds - 1))
+    }, 1000)
+
+    return () => window.clearTimeout(timerId)
+  }, [resendSecondsRemaining])
 
   async function refreshAccountHistory(token = authToken) {
     if (!token) {
@@ -95,7 +131,110 @@ export function useAuth({
     setAuthError('')
 
     const username = authForm.username.trim()
+    const email = authForm.email.trim()
     const password = authForm.password
+    const confirmPassword = authForm.confirmPassword
+    const verificationCode = authForm.verificationCode.trim()
+    const newPassword = authForm.newPassword
+    const confirmNewPassword = authForm.confirmNewPassword
+
+    if (authMode === 'forgot') {
+      if (!email) {
+        setAuthError('Enter your email address.')
+        return
+      }
+
+      if (!isValidEmail(email)) {
+        setAuthError('Enter a valid email address.')
+        return
+      }
+
+      setIsAuthSubmitting(true)
+      try {
+        const payload = await requestPasswordResetCode({ email })
+        setPendingVerificationEmail(email)
+        setDevelopmentVerificationCode(payload.dev_code ?? '')
+        setAuthMode('reset')
+        setResendSecondsRemaining(resendCooldownSeconds)
+        onStatusMessage(formatVerificationStatus(payload, 'Password reset code sent.'))
+      } catch (error) {
+        setAuthError(error.message)
+      } finally {
+        setIsAuthSubmitting(false)
+      }
+      return
+    }
+
+    if (authMode === 'reset') {
+      if (!isValidVerificationCode(verificationCode)) {
+        setAuthError('Enter the 6-digit verification code.')
+        return
+      }
+
+      if (!isValidPassword(newPassword)) {
+        setAuthError(passwordRequirementMessage)
+        return
+      }
+
+      if (newPassword !== confirmNewPassword) {
+        setAuthError('The new passwords do not match.')
+        return
+      }
+
+      setIsAuthSubmitting(true)
+      try {
+        const payload = await confirmPasswordReset({
+          email: pendingVerificationEmail,
+          verificationCode,
+          newPassword,
+        })
+        onStatusMessage(payload.message ?? 'Password has been reset.')
+        setAuthMode('login')
+        setPendingVerificationEmail('')
+        setDevelopmentVerificationCode('')
+        setAuthForm(createEmptyAuthForm())
+      } catch (error) {
+        setAuthError(error.message)
+      } finally {
+        setIsAuthSubmitting(false)
+      }
+      return
+    }
+
+    if (authMode === 'verify') {
+      if (!isValidVerificationCode(verificationCode)) {
+        setAuthError('Enter the 6-digit verification code.')
+        return
+      }
+
+      setIsAuthSubmitting(true)
+      try {
+        const payload = await verifyRegisterCode({
+          username,
+          email: pendingVerificationEmail,
+          password,
+          verificationCode,
+        })
+        const nextSession = {
+          accessToken: payload.access_token,
+          user: payload.user,
+        }
+        saveAuthSession(nextSession)
+        setAuthSession(nextSession)
+        setIsAuthOpen(false)
+        setAuthMode('login')
+        setPendingVerificationEmail('')
+        setDevelopmentVerificationCode('')
+        setAuthForm(createEmptyAuthForm())
+        await refreshAccountHistory(payload.access_token)
+        onStatusMessage(`Logged in as ${payload.user.username}.`)
+      } catch (error) {
+        setAuthError(error.message)
+      } finally {
+        setIsAuthSubmitting(false)
+      }
+      return
+    }
 
     if (!username) {
       setAuthError('Enter a username.')
@@ -112,22 +251,47 @@ export function useAuth({
       return
     }
 
-    if (authMode === 'register' && password.length < 6) {
-      setAuthError('Use at least 6 characters for the password.')
+    if (authMode === 'register') {
+      if (!email) {
+        setAuthError('Enter your email address.')
+        return
+      }
+
+      if (!isValidEmail(email)) {
+        setAuthError('Enter a valid email address.')
+        return
+      }
+
+      if (!isValidPassword(password)) {
+        setAuthError(passwordRequirementMessage)
+        return
+      }
+
+      if (password !== confirmPassword) {
+        setAuthError('The passwords do not match.')
+        return
+      }
+
+      setIsAuthSubmitting(true)
+      try {
+        const payload = await requestRegisterCode({ username, email })
+        setPendingVerificationEmail(email)
+        setDevelopmentVerificationCode(payload.dev_code ?? '')
+        setAuthMode('verify')
+        setResendSecondsRemaining(resendCooldownSeconds)
+        onStatusMessage(formatVerificationStatus(payload, 'Verification code sent.'))
+      } catch (error) {
+        setAuthError(error.message)
+      } finally {
+        setIsAuthSubmitting(false)
+      }
       return
     }
 
     setIsAuthSubmitting(true)
 
     try {
-      const payload =
-        authMode === 'register'
-          ? await registerUser({
-              username,
-              password,
-              displayName: authForm.displayName.trim(),
-            })
-          : await loginUser({ username, password })
+      const payload = await loginUser({ username, password })
 
       const nextSession = {
         accessToken: payload.access_token,
@@ -136,7 +300,7 @@ export function useAuth({
       saveAuthSession(nextSession)
       setAuthSession(nextSession)
       setIsAuthOpen(false)
-      setAuthForm({ displayName: '', username: '', password: '' })
+      setAuthForm(createEmptyAuthForm())
       await refreshAccountHistory(payload.access_token)
       onStatusMessage(
         `Logged in as ${payload.user.display_name || payload.user.username}.`,
@@ -160,6 +324,32 @@ export function useAuth({
     onStatusMessage('Logged out.')
   }
 
+  async function handleResendCode() {
+    if (resendSecondsRemaining > 0 || isAuthSubmitting) {
+      return
+    }
+
+    setAuthError('')
+    setIsAuthSubmitting(true)
+
+    try {
+      const email = pendingVerificationEmail || authForm.email.trim()
+      const payload =
+        authMode === 'verify'
+          ? await requestRegisterCode({ username: authForm.username.trim(), email })
+          : await requestPasswordResetCode({ email })
+
+      setPendingVerificationEmail(email)
+      setDevelopmentVerificationCode(payload.dev_code ?? '')
+      setResendSecondsRemaining(resendCooldownSeconds)
+      onStatusMessage(formatVerificationStatus(payload, 'Verification code sent.'))
+    } catch (error) {
+      setAuthError(error.message)
+    } finally {
+      setIsAuthSubmitting(false)
+    }
+  }
+
   return {
     authToken,
     currentUser,
@@ -169,11 +359,17 @@ export function useAuth({
     setAuthMode,
     authForm,
     setAuthForm,
+    pendingVerificationEmail,
+    setPendingVerificationEmail,
+    developmentVerificationCode,
+    setDevelopmentVerificationCode,
+    resendSecondsRemaining,
     authError,
     setAuthError,
     isAuthSubmitting,
     refreshAccountHistory,
     handleAuthSubmit,
     handleLogout,
+    handleResendCode,
   }
 }

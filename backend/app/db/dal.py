@@ -3,14 +3,21 @@ from typing import Any, List, Dict, Optional
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-def create_user(conn: Connection, username: str, password_hash: str, display_name: str | None = None) -> int:
+def create_user(
+    conn: Connection,
+    username: str,
+    password_hash: str,
+    display_name: str | None = None,
+    email: str | None = None,
+) -> int:
     query = text("""
-        INSERT INTO public.users (username, password_hash, display_name)
-        VALUES (:username, :password_hash, :display_name)
+        INSERT INTO public.users (username, email, password_hash, display_name)
+        VALUES (:username, :email, :password_hash, :display_name)
         RETURNING id;
     """)
     return conn.execute(query, {
         "username": username,
+        "email": email,
         "password_hash": password_hash,
         "display_name": display_name,
     }).scalar()
@@ -22,26 +29,42 @@ def get_user_by_username(conn: Connection, username: str) -> Optional[Dict[str, 
     return dict(row) if row else None
 
 
+def get_user_by_email(conn: Connection, email: str) -> Optional[Dict[str, Any]]:
+    query = text("SELECT * FROM public.users WHERE lower(email) = lower(:email);")
+    row = conn.execute(query, {"email": email}).mappings().first()
+    return dict(row) if row else None
+
+
 def get_user(conn: Connection, user_id: int) -> Optional[Dict[str, Any]]:
-    query = text("SELECT id, username, display_name, created_at FROM public.users WHERE id = :id;")
+    query = text("SELECT id, username, email, display_name, created_at FROM public.users WHERE id = :id;")
     row = conn.execute(query, {"id": user_id}).mappings().first()
     return dict(row) if row else None
 
 
-def insert_auth_token(conn: Connection, user_id: int, token: str) -> int:
+def update_user_password(conn: Connection, user_id: int, password_hash: str) -> None:
+    query = text("UPDATE public.users SET password_hash = :password_hash WHERE id = :id;")
+    conn.execute(query, {"id": user_id, "password_hash": password_hash})
+
+
+def insert_auth_token(conn: Connection, user_id: int, token: str, expires_at=None) -> int:
     query = text("""
-        INSERT INTO public.auth_tokens (user_id, token)
-        VALUES (:user_id, :token)
+        INSERT INTO public.auth_tokens (user_id, token, expires_at)
+        VALUES (:user_id, :token, :expires_at)
         RETURNING id;
     """)
-    return conn.execute(query, {"user_id": user_id, "token": token}).scalar()
+    return conn.execute(query, {
+        "user_id": user_id,
+        "token": token,
+        "expires_at": expires_at,
+    }).scalar()
 
 def get_user_by_token(conn: Connection, token: str) -> Optional[Dict[str, Any]]:
     query = text("""
-        SELECT u.id, u.username, u.display_name, u.created_at
+        SELECT u.id, u.username, u.email, u.display_name, u.created_at
         FROM public.auth_tokens t
         JOIN public.users u ON u.id = t.user_id
-        WHERE t.token = :token;
+        WHERE t.token = :token
+          AND (t.expires_at IS NULL OR t.expires_at > CURRENT_TIMESTAMP);
     """)
     row = conn.execute(query, {"token": token}).mappings().first()
     return dict(row) if row else None
@@ -50,6 +73,89 @@ def get_user_by_token(conn: Connection, token: str) -> Optional[Dict[str, Any]]:
 def delete_auth_token(conn: Connection, token: str) -> None:
     query = text("DELETE FROM public.auth_tokens WHERE token = :token;")
     conn.execute(query, {"token": token})
+
+
+def delete_expired_auth_tokens(conn: Connection) -> None:
+    query = text("DELETE FROM public.auth_tokens WHERE expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP;")
+    conn.execute(query)
+
+
+def delete_auth_tokens_for_user(conn: Connection, user_id: int) -> None:
+    query = text("DELETE FROM public.auth_tokens WHERE user_id = :user_id;")
+    conn.execute(query, {"user_id": user_id})
+
+
+def insert_email_verification_code(
+    conn: Connection,
+    email: str,
+    code_hash: str,
+    purpose: str,
+    expires_at,
+) -> int:
+    query = text("""
+        INSERT INTO public.email_verification_codes (email, code_hash, purpose, expires_at)
+        VALUES (:email, :code_hash, :purpose, :expires_at)
+        RETURNING id;
+    """)
+    return conn.execute(query, {
+        "email": email,
+        "code_hash": code_hash,
+        "purpose": purpose,
+        "expires_at": expires_at,
+    }).scalar()
+
+
+def get_latest_email_verification_code(
+    conn: Connection,
+    email: str,
+    purpose: str,
+) -> Optional[Dict[str, Any]]:
+    query = text("""
+        SELECT *
+        FROM public.email_verification_codes
+        WHERE lower(email) = lower(:email)
+          AND purpose = :purpose
+          AND used_at IS NULL
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1;
+    """)
+    row = conn.execute(query, {"email": email, "purpose": purpose}).mappings().first()
+    return dict(row) if row else None
+
+
+def get_latest_email_verification_request(
+    conn: Connection,
+    email: str,
+    purpose: str,
+) -> Optional[Dict[str, Any]]:
+    query = text("""
+        SELECT *
+        FROM public.email_verification_codes
+        WHERE lower(email) = lower(:email)
+          AND purpose = :purpose
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1;
+    """)
+    row = conn.execute(query, {"email": email, "purpose": purpose}).mappings().first()
+    return dict(row) if row else None
+
+
+def mark_email_verification_code_used(conn: Connection, code_id: int) -> None:
+    query = text("""
+        UPDATE public.email_verification_codes
+        SET used_at = CURRENT_TIMESTAMP
+        WHERE id = :id;
+    """)
+    conn.execute(query, {"id": code_id})
+
+
+def delete_stale_email_verification_codes(conn: Connection) -> None:
+    query = text("""
+        DELETE FROM public.email_verification_codes
+        WHERE used_at IS NOT NULL
+           OR expires_at <= CURRENT_TIMESTAMP;
+    """)
+    conn.execute(query)
 
 def insert_article(conn: Connection, url: str, title: str, source_domain: str, main_body: str) -> int:
     query = text("""

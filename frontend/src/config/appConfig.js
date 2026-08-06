@@ -92,12 +92,12 @@ export const friendlyErrorMessages = {
   },
   extraction_js_rendered: {
     title: 'The article text could not be read',
-    message: 'This site loads the story in a way the backend cannot extract automatically.',
+    message: 'This site loads the story in a way the system cannot read automatically.',
     action: 'Try another source, or upload a saved PDF/Word copy when file upload is available.',
   },
   extraction_empty: {
     title: 'No readable article text found',
-    message: 'The backend reached the page, but could not find enough article content.',
+    message: 'The comparison service reached the page, but could not find enough article content.',
     action: 'Check that the link opens a full article, not a video page or listing page.',
   },
   upload_unsupported_type: {
@@ -119,6 +119,12 @@ export const friendlyErrorMessages = {
     title: 'No readable text found in the file',
     message: 'The uploaded document does not contain enough extractable article text.',
     action: 'Check the file contents and upload a readable copy.',
+  },
+  comparison_timeout: {
+    title: 'Comparison took too long',
+    message:
+      'The articles may be too long for one run. Please split them into smaller sections and try again.',
+    action: 'Try comparing shorter sections of the articles.',
   },
   text_empty: {
     title: 'No text was pasted',

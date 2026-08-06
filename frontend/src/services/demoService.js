@@ -13,7 +13,7 @@ export async function fetchDemoSamples() {
       const response = await fetch(demoPath)
 
       if (!response.ok) {
-        throw new Error(`Demo metadata could not be loaded: ${demoPath}`)
+        throw new Error('One demo example could not be loaded.')
       }
 
       return response.json()

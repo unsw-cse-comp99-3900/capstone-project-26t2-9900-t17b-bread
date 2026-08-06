@@ -65,8 +65,8 @@ export function AppHeader({
 
       <span
         className={`backend-status backend-status--${backendStatus}`}
-        aria-label={`Backend ${backendStatus}`}
-        title={`Backend ${backendStatus}`}
+        aria-label={`Service ${backendStatus}`}
+        title={`Service ${backendStatus}`}
       />
 
       {isAboutOpen && (
@@ -105,10 +105,10 @@ export function AppHeader({
               You can enter article URLs, paste text directly, or upload
               supported documents. The highlighted results include matched
               paragraph pairs, relationship labels, 0-20 scores, and
-              explanations from the backend comparison pipeline.
+              plain-language explanations.
             </p>
             <p>
-              Logged-in users can save comparison history to the database and
+              Logged-in users can save comparison history to their account and
               reopen previous results from the History panel.
             </p>
           </section>

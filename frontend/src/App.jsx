@@ -32,6 +32,7 @@ function App() {
   const [isSaveOptionsOpen, setIsSaveOptionsOpen] = useState(false)
   const [isAboutOpen, setIsAboutOpen] = useState(false)
   const [isRelevanceNoticeOpen, setIsRelevanceNoticeOpen] = useState(false)
+  const [isTimeoutNoticeOpen, setIsTimeoutNoticeOpen] = useState(false)
   const [showBackToTop, setShowBackToTop] = useState(false)
   const {
     articleInputA,
@@ -69,12 +70,17 @@ function App() {
     setAuthMode,
     authForm,
     setAuthForm,
+    pendingVerificationEmail,
+    developmentVerificationCode,
+    setDevelopmentVerificationCode,
+    resendSecondsRemaining,
     authError,
     setAuthError,
     isAuthSubmitting,
     refreshAccountHistory,
     handleAuthSubmit,
     handleLogout,
+    handleResendCode,
   } = useAuth({
     onHistoryItemsChange: setHistoryItems,
     onWorkspaceReset: () => comparisonResetRef.current?.(),
@@ -109,6 +115,8 @@ function App() {
     setFocus,
     sortedComparisonMatches,
     sortingOptions,
+    timeoutNotice,
+    setTimeoutNotice,
     visibleLabels,
   } = useComparison({
     articleInputA,
@@ -143,6 +151,12 @@ function App() {
       setIsRelevanceNoticeOpen(true)
     }
   }, [relevanceNotice])
+
+  useEffect(() => {
+    if (timeoutNotice) {
+      setIsTimeoutNoticeOpen(true)
+    }
+  }, [timeoutNotice])
 
   const demoGroups = groupDemoSamples(demoSamples)
   const {
@@ -202,15 +216,20 @@ function App() {
         isOpen={isAuthOpen}
         mode={authMode}
         authForm={authForm}
+        pendingVerificationEmail={pendingVerificationEmail}
+        developmentVerificationCode={developmentVerificationCode}
+        resendSecondsRemaining={resendSecondsRemaining}
         error={authError}
         isSubmitting={isAuthSubmitting}
         onClose={() => setIsAuthOpen(false)}
         onModeChange={(nextMode) => {
           setAuthMode(nextMode)
           setAuthError('')
+          setDevelopmentVerificationCode('')
         }}
         onFormChange={setAuthForm}
         onSubmit={handleAuthSubmit}
+        onResendCode={handleResendCode}
       />
 
       <SaveOptionsModal
@@ -224,6 +243,15 @@ function App() {
         notice={relevanceNotice}
         isOpen={isRelevanceNoticeOpen}
         onClose={() => setIsRelevanceNoticeOpen(false)}
+      />
+
+      <RelevanceNoticeModal
+        notice={timeoutNotice}
+        isOpen={isTimeoutNoticeOpen}
+        onClose={() => {
+          setIsTimeoutNoticeOpen(false)
+          setTimeoutNotice(null)
+        }}
       />
 
       <main>

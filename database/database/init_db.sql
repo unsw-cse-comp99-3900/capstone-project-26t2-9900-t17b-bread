@@ -16,14 +16,29 @@ WHERE username IS NULL OR username = '';
 ALTER TABLE public.users ALTER COLUMN username SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON public.users(username);
 CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON public.users(email) WHERE email IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.auth_tokens (
     id SERIAL PRIMARY KEY,
     user_id INT REFERENCES public.users(id) ON DELETE CASCADE,
     token TEXT UNIQUE NOT NULL,
+    expires_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+ALTER TABLE public.auth_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
 CREATE INDEX IF NOT EXISTS idx_auth_tokens_token ON public.auth_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_expires_at ON public.auth_tokens(expires_at);
+
+CREATE TABLE IF NOT EXISTS public.email_verification_codes (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_email_verification_lookup ON public.email_verification_codes(email, purpose, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.articles (
     id SERIAL PRIMARY KEY,
