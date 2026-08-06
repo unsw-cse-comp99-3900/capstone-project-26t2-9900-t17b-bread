@@ -53,7 +53,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install mypy types-requests
+          pip install -r requirements-dev.txt
 
       - name: Run mypy
         continue-on-error: true
@@ -71,7 +71,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install tools
-        run: pip install bandit[toml] pip-audit
+        run: pip install -r requirements-dev.txt
 
       - name: Bandit (code security)
         run: bandit -r app/ -c pyproject.toml --severity-level medium
@@ -91,10 +91,14 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
         continue-on-error: true
@@ -102,7 +106,6 @@ jobs:
           DATABASE_URL: ""
           TESSERACT_CMD: ""
         run: |
-          pip install pytest-cov
           python -m pytest tests/ -v --cov=app --cov-report=term-missing --cov-report=xml:coverage.xml -x --timeout=120 || true
 
       - name: Upload coverage artifact
@@ -124,10 +127,14 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
       - name: Verify application starts
         env:

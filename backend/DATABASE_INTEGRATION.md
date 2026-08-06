@@ -264,9 +264,9 @@ Check username, password, host, port, and database name in `backend/.env`. Resta
 
 | Document | Audience |
 |----------|----------|
-| [API中文.md](API中文.md) / [APIenglish.md](APIenglish.md) | Frontend — HTTP endpoints |
+| [API.md](API.md) | Frontend — HTTP endpoints |
 | [database/database/README.md](../database/database/README.md) | Database — init script overview |
-| This file / [DATABASE_INTEGRATION中文.md](DATABASE_INTEGRATION中文.md) | Database ↔ backend integration |
+| This file | Database ↔ backend integration |
 
 ---
 

@@ -3,6 +3,8 @@
   "/demo-files/iran-strikes-url/demo.json",
   "/demo-files/us-iran-strikes-url/demo.json",
   "/demo-files/south-china-sea-url/demo.json",
+  "/demo-files/irrelevant-url/demo.json",
   "/demo-files/gene-therapy-word/demo.json",
-  "/demo-files/volcano-text/demo.json"
+  "/demo-files/volcano-text/demo.json",
+  "/demo-files/timeout-text/demo.json"
 ]

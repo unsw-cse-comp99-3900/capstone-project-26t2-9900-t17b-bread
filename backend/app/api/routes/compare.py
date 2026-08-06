@@ -27,6 +27,7 @@ from app.schemas.compare import (
     CompareResponse,
     ComparisonFocus,
 )
+from app.config import get_settings
 from app.services.article_input import ArticleInput
 from app.services.pipeline import (
     ArticleResult,
@@ -53,6 +54,33 @@ engine = create_engine(
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/compare", tags=["compare"])
+
+COMPARISON_TIMEOUT_CODE = "comparison_timeout"
+COMPARISON_TIMEOUT_MESSAGE = (
+    "This comparison is taking too long. The articles may be too long for one run. "
+    "Please split them into smaller sections and try again."
+)
+
+
+def _comparison_timeout_detail() -> dict[str, str]:
+    return {
+        "stage": "comparison",
+        "code": COMPARISON_TIMEOUT_CODE,
+        "message": COMPARISON_TIMEOUT_MESSAGE,
+    }
+
+
+async def _with_comparison_timeout(awaitable):
+    try:
+        return await asyncio.wait_for(
+            awaitable,
+            timeout=get_settings().comparison_timeout_seconds,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=408,
+            detail=_comparison_timeout_detail(),
+        ) from exc
 
 
 def _compare_response_fields() -> set[str]:
@@ -1059,6 +1087,7 @@ def _build_comparison_payload(
             selected_factor=selected_factor,
         ),
         "matches": matches,
+        "comparison_summary": comparison.comparison_summary,
     }
 
 
@@ -1131,6 +1160,14 @@ def _build_compare_response(
         "focus": focus,
         "articles": articles,
         "errors": errors,
+
+        "relevant": pair_result.relevant,
+        "relevance_score": pair_result.relevance_score,
+        "cosine_relevance_score": pair_result.cosine_relevance_score,
+        "bm25_relevance_score": pair_result.bm25_relevance_score,
+        "relevance_threshold": pair_result.relevance_threshold,
+        "message": pair_result.message,
+
         "comparison": _build_comparison_payload(pair_result),
         "session_token": session_token,
         "comparison_id": comparison_id,
@@ -1407,12 +1444,14 @@ async def compare(
     progress = ProgressTracker(name="compare")
     user = get_optional_user_from_header(authorization)
 
-    return await _run_compare_inputs(
-        article_a,
-        article_b,
-        payload.focus,
-        progress=progress,
-        user_id=int(user["id"]) if user else None,
+    return await _with_comparison_timeout(
+        _run_compare_inputs(
+            article_a,
+            article_b,
+            payload.focus,
+            progress=progress,
+            user_id=int(user["id"]) if user else None,
+        )
     )
 
 
@@ -1446,12 +1485,14 @@ async def compare_stream(
         try:
             article_a, article_b = _build_json_article_inputs(payload)
 
-            response = await _run_compare_inputs(
-                article_a,
-                article_b,
-                payload.focus,
-                progress=progress,
-                user_id=int(user["id"]) if user else None,
+            response = await _with_comparison_timeout(
+                _run_compare_inputs(
+                    article_a,
+                    article_b,
+                    payload.focus,
+                    progress=progress,
+                    user_id=int(user["id"]) if user else None,
+                )
             )
 
             return response.model_dump(exclude_none=True)
@@ -1513,12 +1554,14 @@ async def compare_files(
     progress = ProgressTracker(name="compare")
     user = get_optional_user_from_header(authorization)
 
-    return await _run_compare_inputs(
-        article_a,
-        article_b,
-        focus,
-        progress=progress,
-        user_id=int(user["id"]) if user else None,
+    return await _with_comparison_timeout(
+        _run_compare_inputs(
+            article_a,
+            article_b,
+            focus,
+            progress=progress,
+            user_id=int(user["id"]) if user else None,
+        )
     )
 
 
@@ -1577,12 +1620,14 @@ async def compare_files_stream(
 
     async def runner() -> dict:
         try:
-            response = await _run_compare_inputs(
-                article_a,
-                article_b,
-                focus,
-                progress=progress,
-                user_id=int(user["id"]) if user else None,
+            response = await _with_comparison_timeout(
+                _run_compare_inputs(
+                    article_a,
+                    article_b,
+                    focus,
+                    progress=progress,
+                    user_id=int(user["id"]) if user else None,
+                )
             )
 
             return response.model_dump(exclude_none=True)

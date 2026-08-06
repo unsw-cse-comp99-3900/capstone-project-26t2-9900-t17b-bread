@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -544,6 +544,7 @@ class ComparisonResult(BaseModel):
     summary: ComparisonSummary = Field(
         default_factory=ComparisonSummary
     )
+    comparison_summary: dict[str, Any] = Field(default_factory=dict)
 
     score_guides: ScoreGuides
 
@@ -565,6 +566,48 @@ class CompareResponse(BaseModel):
 
     errors: list[StageError] = Field(
         default_factory=list
+    )
+
+    relevant: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the articles are relevant enough for detailed comparison."
+        ),
+    )
+
+    relevance_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Combined summary relevance score.",
+    )
+
+    cosine_relevance_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Cosine similarity component of summary relevance.",
+    )
+
+    bm25_relevance_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="BM25 component of summary relevance.",
+    )
+
+    relevance_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum relevance score required for detailed comparison."
+        ),
+    )
+
+    message: str | None = Field(
+        default=None,
+        description="Human-readable result message.",
     )
 
     processing: ProcessingSummary | None = Field(
