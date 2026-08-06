@@ -85,6 +85,61 @@
   font-weight: 850;
 }
 
+.comparison-summary__factor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 16px;
+  color: var(--ink);
+}
+
+.comparison-summary__factor > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.comparison-summary__factor > strong {
+  font-size: 14px;
+}
+
+.comparison-summary__factor details {
+  flex-basis: 100%;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.comparison-summary__factor summary {
+  width: fit-content;
+  color: var(--orange-dark);
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.comparison-summary__factor details p {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.comparison-summary__factor ul {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.comparison-summary__factor li strong {
+  color: var(--ink);
+}
+
+.comparison-summary__factor small {
+  display: block;
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
 .relevance-modal-backdrop {
   position: fixed;
   inset: 0;

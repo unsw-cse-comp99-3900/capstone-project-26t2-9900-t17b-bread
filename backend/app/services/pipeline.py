@@ -1026,6 +1026,11 @@ async def _run_comparison_pipeline(
         relationships,
     )
 
+    focus_scaling_completed_message = (
+        "Focus analysis completed with "
+        f"{len(relationships)} ranked relationships."
+    )
+
     if progress is not None:
         await progress.emit(
             percent=99,

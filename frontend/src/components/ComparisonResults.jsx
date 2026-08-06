@@ -1,6 +1,8 @@
 import { relationshipOptions } from '../config/appConfig'
 import {
   buildReadableComparisonSummary,
+  formatFactorName,
+  formatScoreLevel,
   formatSummaryScore,
   getMatchCounts,
 } from '../utils/comparison'
@@ -67,13 +69,29 @@ export function SortingControl({ options, selectedSort, onSelectSort }) {
   )
 }
 
-export function ComparisonSummaryCard({ matches, backendSummary }) {
+export function ComparisonSummaryCard({
+  matches,
+  backendSummary,
+  focus,
+  selectedFactor,
+  scoreGuides,
+}) {
   if (matches.length === 0 && !backendSummary) {
     return null
   }
 
   const counts = getMatchCounts(matches)
   const summaryText = buildReadableComparisonSummary(matches, backendSummary)
+  const factorGuide = scoreGuides?.factor_relevance ?? null
+  const effectiveFactor =
+    selectedFactor ??
+    factorGuide?.factor ??
+    matches.find((match) => match.factor_relevance?.factor)?.factor_relevance
+      ?.factor ??
+    (focus && focus !== 'general' ? focus : null)
+  const factorName = effectiveFactor
+    ? formatFactorName(effectiveFactor)
+    : null
   const stats = [
     { label: 'Matched pairs', value: backendSummary?.match_count ?? matches.length },
     { label: 'Similar', value: backendSummary?.aligned_count ?? counts.aligned },
@@ -90,7 +108,11 @@ export function ComparisonSummaryCard({ matches, backendSummary }) {
 
   if (backendSummary?.average_factor_relevance != null) {
     stats.push({
-      label: 'Avg factor relevance',
+      label: factorGuide?.title
+        ? `Avg ${factorGuide.title}`
+        : factorName
+          ? `Avg ${factorName} Relevance`
+          : 'Avg Factor Relevance',
       value: formatSummaryScore(backendSummary, 'average_factor_relevance'),
     })
   }
@@ -108,6 +130,35 @@ export function ComparisonSummaryCard({ matches, backendSummary }) {
         <p className="eyebrow">High-level summary</p>
         <h3>Article difference overview</h3>
         <p>{summaryText}</p>
+        {factorName && (
+          <div className="comparison-summary__factor">
+            <span>
+              {focus === 'general'
+                ? 'Automatically selected factor'
+                : 'Selected factor'}
+            </span>
+            <strong>{factorName}</strong>
+            {factorGuide && (
+              <details>
+                <summary>{factorGuide.title ?? `${factorName} Relevance`} guide</summary>
+                {factorGuide.question && <p>{factorGuide.question}</p>}
+                {Array.isArray(factorGuide.bands) && factorGuide.bands.length > 0 && (
+                  <ul>
+                    {factorGuide.bands.map((band) => (
+                      <li key={`${band.min}-${band.max}-${band.level}`}>
+                        <strong>
+                          {band.min}-{band.max}: {formatScoreLevel(band.level)}
+                        </strong>
+                        {band.interpretation && ` - ${band.interpretation}`}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {factorGuide.disclaimer && <small>{factorGuide.disclaimer}</small>}
+              </details>
+            )}
+          </div>
+        )}
       </div>
       <dl>
         {stats.map((item) => (

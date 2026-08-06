@@ -53,6 +53,18 @@ export function formatScoreLevel(level) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+export function formatFactorName(factor, fallbackLabel = 'Unknown') {
+  const value = String(factor ?? '').trim()
+
+  if (!value) {
+    return fallbackLabel
+  }
+
+  return value
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
 export function formatReasonCode(reasonCode) {
   if (!reasonCode) {
     return ''
@@ -172,7 +184,7 @@ export function getScoreDetailItems(match, scoreGuides) {
       label: getScoreGuideTitle(
         scoreGuides,
         'factor_relevance',
-        `${match.factor_relevance.factor ?? 'Focus'} relevance`,
+        `${formatFactorName(match.factor_relevance.factor, 'Factor')} Relevance`,
       ),
       value: formatPublicScore(match, 'factor_relevance'),
       level: formatScoreLevel(match.factor_relevance.level),

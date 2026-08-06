@@ -66,6 +66,7 @@ export function useResultActions({
 
     const summary = buildComparisonSummary({
       focus,
+      selectedFactor: comparison?.selected_factor,
       articleA,
       articleB,
       matches: sortedComparisonMatches,
@@ -130,6 +131,7 @@ export function useResultActions({
     }))
     const htmlReport = buildHtmlReport({
       focus,
+      selectedFactor: comparison?.selected_factor,
       articleA,
       articleB,
       matches: enrichedMatches,

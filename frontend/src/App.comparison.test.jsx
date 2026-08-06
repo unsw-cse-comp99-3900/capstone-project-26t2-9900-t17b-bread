@@ -4,7 +4,10 @@ import {
   mockFrontendFetch,
   runTextComparison,
 } from './test/appTestUtils'
-import { irrelevantComparisonPayload } from './test/mockData'
+import {
+  comparisonPayload,
+  irrelevantComparisonPayload,
+} from './test/mockData'
 
 describe('Narrative Diff comparison results', () => {
   beforeEach(() => {
@@ -22,6 +25,9 @@ describe('Narrative Diff comparison results', () => {
     expect(screen.getByText(/article difference overview/i)).toBeInTheDocument()
     expect(screen.getByText(/matched pairs/i)).toBeInTheDocument()
     expect(screen.getByText(/13.7\/20/i)).toBeInTheDocument()
+    expect(screen.getByText(/automatically selected factor/i)).toBeInTheDocument()
+    expect(screen.getByText(/^political$/i)).toBeInTheDocument()
+    expect(screen.getByText(/avg political relevance/i)).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: /sort by/i })).toHaveValue(
       'best_match',
     )
@@ -80,8 +86,14 @@ describe('Narrative Diff comparison results', () => {
       within(evidencePanel).getByText(/stance discrepancy/i),
     ).toBeInTheDocument()
     expect(
-      within(evidencePanel).queryByText(/focus relevance/i),
-    ).not.toBeInTheDocument()
+      within(evidencePanel).getByText(/political relevance/i),
+    ).toBeInTheDocument()
+    expect(within(evidencePanel).getByText(/12.0\/20/i)).toBeInTheDocument()
+    expect(
+      within(evidencePanel).getByText(
+        /selected once for the complete article pair/i,
+      ),
+    ).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /close evidence panel/i }))
 
@@ -181,5 +193,63 @@ describe('Narrative Diff comparison results', () => {
 
     expect(screen.getByText(/pair 2/i)).toBeInTheDocument()
     expect(screen.getByText(/10.0\/20/i)).toBeInTheDocument()
+  })
+
+  it('sorts general-focus matches by the backend-selected global factor', async () => {
+    const user = await runTextComparison()
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /sort by/i }),
+      'selected_factor',
+    )
+
+    const evidencePanel = screen.getByRole('complementary')
+    expect(within(evidencePanel).getByText(/pair 2/i)).toBeInTheDocument()
+    expect(
+      within(evidencePanel).getByText(/political relevance/i),
+    ).toBeInTheDocument()
+    expect(within(evidencePanel).getByText(/18.0\/20/i)).toBeInTheDocument()
+  })
+
+  it('shows the complete backend-provided factor score guide', async () => {
+    const user = await runTextComparison()
+
+    await user.click(screen.getByText(/political relevance guide/i))
+
+    expect(
+      screen.getByText(/automatically selected political factor/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/17-20: Very Strong/i)).toBeInTheDocument()
+    expect(
+      screen.getAllByText(/selected once for the complete article pair/i).length,
+    ).toBeGreaterThan(0)
+  })
+
+  it('supports stored comparisons from the previous response shape', async () => {
+    const legacyPayload = structuredClone(comparisonPayload)
+    delete legacyPayload.comparison.selected_factor
+    delete legacyPayload.comparison.summary.average_factor_relevance
+    delete legacyPayload.comparison.score_guides.factor_relevance
+    legacyPayload.comparison.sorting.options =
+      legacyPayload.comparison.sorting.options.filter(
+        (option) => option.key !== 'selected_factor',
+      )
+    legacyPayload.comparison.matches.forEach((match) => {
+      delete match.factor_relevance
+    })
+    mockFrontendFetch({ comparisonPayload: legacyPayload })
+
+    const user = await runTextComparison()
+    await user.click(
+      screen.getByRole('button', {
+        name: /a volcano erupted near the icelandic town/i,
+      }),
+    )
+
+    const evidencePanel = screen.getByRole('complementary')
+    expect(within(evidencePanel).getByText(/match strength/i)).toBeInTheDocument()
+    expect(
+      within(evidencePanel).queryByText(/political relevance/i),
+    ).not.toBeInTheDocument()
   })
 })
