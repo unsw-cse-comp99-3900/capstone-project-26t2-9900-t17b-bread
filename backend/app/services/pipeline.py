@@ -781,12 +781,20 @@ async def _run_comparison_pipeline(
     # 8. Focus scaling and factor relevance ranking
     # ------------------------------------------------------------------
 
+    if focus_value == "general":
+        focus_scaling_start_message = (
+            "Evaluating political, sentiment, economic, and social "
+            "relevance for each relationship..."
+        )
+    else:
+        focus_scaling_start_message = (
+            f"Applying {focus_value} relevance and display ranking..."
+        )
+
     if progress is not None:
         await progress.emit(
             percent=99,
-            message=(
-                "Applying focus relevance and display ranking..."
-            ),
+            message=focus_scaling_start_message,
             step="focus_scaling",
             status="running",
         )
@@ -798,20 +806,40 @@ async def _run_comparison_pipeline(
         embeddings_b=embeddings_b,
         focus=focus_value,
 
-        # General mode preserves relationship/article order. A selected
-        # factor returns results ordered by factor_relevance_score.
+        # General mode evaluates all four supported factors for each pair,
+        # returns the strongest factor and its relevance, but preserves the
+        # original relationship/article order.
+        #
+        # An explicitly selected factor returns results ordered by its
+        # factor_relevance_score.
         sort_by_factor_relevance=(
             focus_value != "general"
         ),
     )
 
+    summary_service = get_summary_service()
+
+    comparison_summary = await asyncio.to_thread(
+        summary_service.summarize_comparison,
+        relationships,
+    )
+
+    if focus_value == "general":
+        focus_scaling_completed_message = (
+            "General factor analysis completed for "
+            f"{len(relationships)} relationships. "
+            "The strongest factor was selected for each relationship."
+        )
+    else:
+        focus_scaling_completed_message = (
+            f"{focus_value.capitalize()} relevance analysis completed "
+            f"with {len(relationships)} ranked relationships."
+        )
+
     if progress is not None:
         await progress.emit(
             percent=99,
-            message=(
-                "Focus scaling completed with "
-                f"{len(relationships)} ranked relationships."
-            ),
+            message=focus_scaling_completed_message,
             step="focus_scaling",
             status="completed",
         )

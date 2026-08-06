@@ -87,6 +87,15 @@ def _build_stage_error(result: ArticleResult) -> dict[str, Any] | None:
 SCORE_SCALE_MIN = 0
 SCORE_SCALE_MAX = 20
 
+SPECIFIC_FACTOR_VALUES: frozenset[str] = frozenset(
+    {
+        "political",
+        "sentiment",
+        "economic",
+        "social",
+    }
+)
+
 
 def _safe_float(
     value: Any,
@@ -322,10 +331,31 @@ def _build_factor_relevance_score(
     factor_relevance_score: Any,
     *,
     focus: str,
+    selected_factor: Any = None,
 ) -> dict[str, Any] | None:
-    """Build the public Factor Relevance score object."""
+    """
+    Build the public Factor Relevance score object.
 
-    if focus == "general":
+    Specific-focus mode:
+        Return relevance to the explicitly requested factor.
+
+    General mode:
+        Return relevance to the one factor selected for the complete article
+        pair by FocusScalingService.
+    """
+
+    focus_value = _normalise_focus_value(
+        focus
+    )
+
+    if focus_value == "general":
+        factor = str(
+            selected_factor or ""
+        ).strip().lower()
+    else:
+        factor = focus_value
+
+    if factor not in SPECIFIC_FACTOR_VALUES:
         return None
 
     score = _to_public_score(
@@ -333,7 +363,7 @@ def _build_factor_relevance_score(
     )
 
     return {
-        "factor": focus,
+        "factor": factor,
         "score": score,
         "scale_min": SCORE_SCALE_MIN,
         "scale_max": SCORE_SCALE_MAX,
@@ -341,7 +371,7 @@ def _build_factor_relevance_score(
         "interpretation": (
             _factor_relevance_interpretation(
                 score,
-                focus=focus,
+                focus=factor,
             )
         ),
     }
@@ -473,6 +503,9 @@ def _build_frontend_matches(
     The route uses internal scores only as conversion inputs. Raw cosine, BM25,
     hybrid, mapping, NLI, confidence, and factor-adjustment values are not
     exposed in the public response.
+
+    In general mode, factor_relevance contains the strongest factor selected
+    independently for each relationship by FocusScalingService.
     """
 
     if pair_result.comparison is None:
@@ -505,6 +538,9 @@ def _build_frontend_matches(
                     "factor_relevance_score"
                 ),
                 focus=focus,
+                selected_factor=relationship.get(
+                    "selected_factor"
+                ),
             )
         )
 
@@ -591,6 +627,8 @@ def _build_frontend_matches(
 
 def _build_score_guides(
     focus: str,
+    *,
+    selected_factor: Any = None,
 ) -> dict[str, Any]:
     """Return fixed, actionable score ranges for frontend tooltips."""
 
@@ -705,25 +743,49 @@ def _build_score_guides(
         },
     }
 
-    if focus != "general":
-        focus_name = focus.capitalize()
+    effective_factor = (
+        str(
+            selected_factor or ""
+        ).strip().lower()
+        if focus == "general"
+        else focus
+    )
+
+    if effective_factor in SPECIFIC_FACTOR_VALUES:
+        factor_name = (
+            effective_factor.capitalize()
+        )
+
+        if focus == "general":
+            question = (
+                "How strongly is this matched pair related to the "
+                f"automatically selected {factor_name.lower()} factor?"
+            )
+            disclaimer = (
+                f"{factor_name} was selected once for the complete article "
+                "pair and is applied consistently to every matched pair."
+            )
+        else:
+            question = (
+                "How strongly is this matched pair related to the selected "
+                f"{factor_name.lower()} factor?"
+            )
+            disclaimer = None
 
         guides["factor_relevance"] = {
-            "title": f"{focus_name} Relevance",
-            "question": (
-                "How strongly is this matched pair related to the selected "
-                f"{focus_name.lower()} factor?"
-            ),
-            "factor": focus,
+            "title": f"{factor_name} Relevance",
+            "question": question,
+            "factor": effective_factor,
             "scale_min": SCORE_SCALE_MIN,
             "scale_max": SCORE_SCALE_MAX,
+            "disclaimer": disclaimer,
             "bands": [
                 {
                     "min": 0,
                     "max": 4,
                     "level": "very_low",
                     "interpretation": (
-                        f"{focus_name} content is largely absent."
+                        f"{factor_name} content is largely absent."
                     ),
                 },
                 {
@@ -731,7 +793,7 @@ def _build_score_guides(
                     "max": 8,
                     "level": "low",
                     "interpretation": (
-                        f"{focus_name} content is mentioned only briefly."
+                        f"{factor_name} content is mentioned only briefly."
                     ),
                 },
                 {
@@ -739,7 +801,7 @@ def _build_score_guides(
                     "max": 12,
                     "level": "moderate",
                     "interpretation": (
-                        f"{focus_name} content is meaningful but not central."
+                        f"{factor_name} content is meaningful but not central."
                     ),
                 },
                 {
@@ -747,7 +809,7 @@ def _build_score_guides(
                     "max": 16,
                     "level": "strong",
                     "interpretation": (
-                        f"{focus_name} content is an important part of the pair."
+                        f"{factor_name} content is an important part of the pair."
                     ),
                 },
                 {
@@ -755,7 +817,7 @@ def _build_score_guides(
                     "max": 20,
                     "level": "very_strong",
                     "interpretation": (
-                        f"{focus_name} content is central to the pair."
+                        f"{factor_name} content is central to the pair."
                     ),
                 },
             ],
@@ -766,6 +828,8 @@ def _build_score_guides(
 
 def _build_sorting_metadata(
     focus: str,
+    *,
+    selected_factor: Any = None,
 ) -> dict[str, Any]:
     """Describe sorting choices supported directly by the response."""
 
@@ -781,14 +845,24 @@ def _build_sorting_metadata(
         },
     ]
 
-    if focus != "general":
-        focus_name = focus.capitalize()
+    effective_factor = (
+        str(
+            selected_factor or ""
+        ).strip().lower()
+        if focus == "general"
+        else focus
+    )
+
+    if effective_factor in SPECIFIC_FACTOR_VALUES:
+        factor_name = (
+            effective_factor.capitalize()
+        )
 
         options.append(
             {
                 "key": "selected_factor",
                 "label": (
-                    f"Most Relevant to {focus_name}"
+                    f"Most Relevant to {factor_name}"
                 ),
                 "score_path": (
                     "factor_relevance.score"
@@ -798,8 +872,8 @@ def _build_sorting_metadata(
                 ),
                 "direction": "descending",
                 "description": (
-                    "Show pairs most relevant to the selected factor first. "
-                    "Match Strength is used as the tie-breaker."
+                    f"Show pairs most relevant to the {factor_name.lower()} "
+                    "factor first. Match Strength is used as the tie-breaker."
                 ),
             }
         )
@@ -894,6 +968,33 @@ def _build_comparison_payload(
         pair_result
     )
 
+    selected_factor: str | None = None
+
+    if focus != "general":
+        selected_factor = focus
+    else:
+        for match in matches:
+            factor_relevance = match.get(
+                "factor_relevance"
+            )
+
+            if not isinstance(
+                factor_relevance,
+                dict,
+            ):
+                continue
+
+            candidate_factor = str(
+                factor_relevance.get(
+                    "factor",
+                    "",
+                )
+            ).strip().lower()
+
+            if candidate_factor in SPECIFIC_FACTOR_VALUES:
+                selected_factor = candidate_factor
+                break
+
     summary: dict[str, Any] = {
         "match_count": len(matches),
         "aligned_count": sum(
@@ -947,12 +1048,15 @@ def _build_comparison_payload(
 
     return {
         "focus": focus,
+        "selected_factor": selected_factor,
         "summary": summary,
         "score_guides": _build_score_guides(
-            focus
+            focus,
+            selected_factor=selected_factor,
         ),
         "sorting": _build_sorting_metadata(
-            focus
+            focus,
+            selected_factor=selected_factor,
         ),
         "matches": matches,
     }

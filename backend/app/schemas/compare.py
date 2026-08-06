@@ -206,9 +206,11 @@ class MatchStrengthScore(BaseModel):
 
 class FactorRelevanceScore(BaseModel):
     """
-    Public 0-20 score describing relevance to the selected factor.
+    Public 0-20 score describing factor relevance for one matched pair.
 
-    This field is omitted when the comparison focus is general.
+    For a specific comparison focus, ``factor`` is the user-selected factor.
+    For general focus, ``factor`` is the one factor selected for the complete
+    article pair and applied consistently to every matched pair.
     """
 
     factor: SelectedFactor
@@ -374,7 +376,9 @@ class ScoreGuides(BaseModel):
     """
     Fixed score definitions returned for frontend labels and tooltips.
 
-    factor_relevance is null/omitted for general-focus comparisons.
+    ``factor_relevance`` is available for both specific-focus and general-focus
+    comparisons. In general mode, the guide describes the one factor selected
+    for the complete article pair.
     """
 
     match_strength: ScoreGuide
@@ -463,6 +467,11 @@ class ComparisonSummary(BaseModel):
         default=None,
         ge=0.0,
         le=20.0,
+        description=(
+            "Mean public factor-relevance score across visible matches. "
+            "In general mode, every match is scored against the same factor "
+            "selected for the complete article pair."
+        ),
     )
 
 
@@ -498,8 +507,11 @@ class ComparisonMatch(BaseModel):
     factor_relevance: FactorRelevanceScore | None = Field(
         default=None,
         description=(
-            "Relevance to the selected non-general factor. "
-            "Null for general-focus comparisons."
+            "Factor relevance for this matched pair. For a specific focus, "
+            "the factor is the user-selected direction. For general focus, "
+            "the factor is selected once for the complete article pair and "
+            "applied consistently to every match. Null only when factor "
+            "relevance could not be calculated."
         ),
     )
 
@@ -518,6 +530,16 @@ class ComparisonResult(BaseModel):
     """Final comparison output returned to the frontend."""
 
     focus: ComparisonFocus = ComparisonFocus.GENERAL
+
+    selected_factor: SelectedFactor | None = Field(
+        default=None,
+        description=(
+            "Effective factor used for factor-relevance scoring. For a "
+            "specific focus, this equals the requested factor. For general "
+            "focus, this is selected automatically once for the complete "
+            "article pair."
+        ),
+    )
 
     summary: ComparisonSummary = Field(
         default_factory=ComparisonSummary
