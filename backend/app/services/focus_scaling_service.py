@@ -60,6 +60,24 @@ FOCUS_PROFILES: dict[str, tuple[str, ...]] = {
 }
 
 
+# Fixed order used only as the final deterministic tie-breaker when two
+# directions receive exactly the same pair relevance.
+GENERAL_FOCUS_CANDIDATES: tuple[str, ...] = (
+    "political",
+    "sentiment",
+    "economic",
+    "social",
+)
+
+
+# General mode selects one factor for the whole article pair. Each article-side
+# score is the mean of its strongest calibrated chunk relevances, which reduces
+# dilution from long articles while preventing one isolated chunk from deciding
+# the global factor.
+GENERAL_SELECTION_TOP_FRACTION = 0.25
+GENERAL_SELECTION_MAX_TOP_K = 12
+
+
 FOCUS_MAX_BOOST: dict[str, float] = {
     "general": 0.0,
     "political": 0.15,
@@ -180,11 +198,19 @@ class FocusScalingService:
        independent of base_hybrid_score and can be used directly for focus-only
        ranking.
 
+       When the requested focus is ``general``, all four supported directions
+       are evaluated across the complete article pair. One global factor is
+       selected and then used to calculate factor relevance for every accepted
+       relationship.
+
     2. focus_adjusted_score
 
        A bounded display score calculated by applying a small focus boost to
        base_hybrid_score. It can be used when the UI needs one score combining
        content similarity and focus preference.
+
+       General mode remains non-boosting: it automatically selects one global
+       direction but leaves focus_adjusted_score equal to base_hybrid_score.
     """
 
     def __init__(self) -> None:
@@ -204,6 +230,7 @@ class FocusScalingService:
 
         Every returned item includes:
 
+            selected_factor
             factor_relevance_score
             factor_rank
             focus_adjusted_score
@@ -211,9 +238,16 @@ class FocusScalingService:
             factor_adjustment_percent
             scale_factor
 
+        General mode performs two distinct steps:
+
+            1. Evaluate political, sentiment, economic, and social relevance
+               across all chunks from both articles.
+            2. Select one global factor and use that same factor for every
+               accepted relationship.
+
         When sort_by_factor_relevance=True, results are returned in descending
         factor relevance. Otherwise, the original relationship order is
-        preserved while factor_rank still records the focus-specific rank.
+        preserved while factor_rank still records the factor-specific rank.
         """
 
         if not relationships:
@@ -221,13 +255,92 @@ class FocusScalingService:
 
         focus_value = _normalise_focus(focus)
 
-        focus_relevance_lookup = (
-            self.compute_focus_relevance_lookup(
-                embeddings_a,
-                embeddings_b,
-                focus=focus_value,
+        selected_factor: str | None
+        selected_factor_global_score: float | None
+        general_factor_scores: dict[str, float]
+        general_factor_side_scores: dict[
+            str,
+            dict[str, float],
+        ]
+
+        if focus_value == "general":
+            general_focus_lookups = {
+                candidate_focus: (
+                    self.compute_focus_relevance_lookup(
+                        embeddings_a,
+                        embeddings_b,
+                        focus=candidate_focus,
+                    )
+                )
+                for candidate_focus
+                in GENERAL_FOCUS_CANDIDATES
+            }
+
+            (
+                selected_factor,
+                general_factor_scores,
+                general_factor_side_scores,
+            ) = self._select_global_factor(
+                general_focus_lookups
             )
-        )
+
+            if selected_factor is None:
+                selected_factor_global_score = None
+                focus_relevance_lookup = {
+                    "a": {},
+                    "b": {},
+                }
+            else:
+                selected_factor_global_score = (
+                    general_factor_scores.get(
+                        selected_factor,
+                        0.0,
+                    )
+                )
+                focus_relevance_lookup = (
+                    general_focus_lookups.get(
+                        selected_factor,
+                        {
+                            "a": {},
+                            "b": {},
+                        },
+                    )
+                )
+
+            logger.info(
+                (
+                    "General focus selection: selected_factor=%s "
+                    "global_score=%s factor_scores=%s"
+                ),
+                selected_factor,
+                (
+                    f"{selected_factor_global_score:.4f}"
+                    if selected_factor_global_score
+                    is not None
+                    else None
+                ),
+                {
+                    factor_name: round(
+                        factor_score,
+                        4,
+                    )
+                    for factor_name, factor_score
+                    in general_factor_scores.items()
+                },
+            )
+
+        else:
+            selected_factor = focus_value
+            selected_factor_global_score = None
+            general_factor_scores = {}
+            general_factor_side_scores = {}
+            focus_relevance_lookup = (
+                self.compute_focus_relevance_lookup(
+                    embeddings_a,
+                    embeddings_b,
+                    focus=focus_value,
+                )
+            )
 
         enriched_relationships: list[dict[str, Any]] = []
 
@@ -245,21 +358,70 @@ class FocusScalingService:
                 )
             )
 
-            scaling_result = self.apply_focus_scaling(
-                base_score=base_hybrid_score,
-                a_chunk_id=str(a_chunk_id),
-                b_chunk_id=str(b_chunk_id),
-                focus=focus_value,
-                focus_relevance_lookup=(
-                    focus_relevance_lookup
-                ),
-            )
+            if focus_value == "general":
+                scaling_result = (
+                    self._build_general_result_for_factor(
+                        base_score=base_hybrid_score,
+                        a_chunk_id=str(a_chunk_id),
+                        b_chunk_id=str(b_chunk_id),
+                        selected_factor=selected_factor,
+                        focus_relevance_lookup=(
+                            focus_relevance_lookup
+                        ),
+                        selected_factor_global_score=(
+                            selected_factor_global_score
+                        ),
+                        general_factor_scores=(
+                            general_factor_scores
+                        ),
+                        general_factor_side_scores=(
+                            general_factor_side_scores
+                        ),
+                    )
+                )
+            else:
+                scaling_result = self.apply_focus_scaling(
+                    base_score=base_hybrid_score,
+                    a_chunk_id=str(a_chunk_id),
+                    b_chunk_id=str(b_chunk_id),
+                    focus=focus_value,
+                    focus_relevance_lookup=(
+                        focus_relevance_lookup
+                    ),
+                )
 
             enriched = dict(relationship)
 
             enriched.update(
                 {
                     "focus": scaling_result["focus"],
+
+                    # General mode uses the same selected factor for every pair.
+                    "selected_factor": (
+                        scaling_result[
+                            "selected_factor"
+                        ]
+                    ),
+
+                    # Internal article-pair selection diagnostics.
+                    "selected_factor_global_score": (
+                        scaling_result.get(
+                            "selected_factor_global_score"
+                        )
+                    ),
+                    "general_factor_scores": (
+                        scaling_result.get(
+                            "general_factor_scores",
+                            {},
+                        )
+                    ),
+                    "general_factor_side_scores": (
+                        scaling_result.get(
+                            "general_factor_side_scores",
+                            {},
+                        )
+                    ),
+
                     "a_focus_relevance": (
                         scaling_result[
                             "a_focus_relevance"
@@ -504,6 +666,7 @@ class FocusScalingService:
 
         return {
             "focus": focus_value,
+            "selected_factor": focus_value,
             "a_focus_relevance": a_relevance,
             "b_focus_relevance": b_relevance,
             "bilateral_focus_relevance": (
@@ -815,13 +978,305 @@ class FocusScalingService:
             pair_number,
         )
 
+    def _select_global_factor(
+        self,
+        focus_relevance_lookups: dict[
+            str,
+            dict[str, dict[str, float]],
+        ],
+    ) -> tuple[
+        str | None,
+        dict[str, float],
+        dict[str, dict[str, float]],
+    ]:
+        """
+        Select one factor for the complete article pair.
+
+        For each factor, both article sides receive an article-level score based
+        on the strongest calibrated chunk relevances. The final global score
+        uses the same bilateral formula as pair relevance:
+
+            0.80 * geometric_mean(article_a_score, article_b_score)
+            + 0.20 * max(article_a_score, article_b_score)
+
+        This favours factors represented in both articles while retaining a
+        small allowance when one article covers the factor more strongly.
+        """
+
+        factor_scores: dict[str, float] = {}
+        factor_side_scores: dict[
+            str,
+            dict[str, float],
+        ] = {}
+
+        for candidate_focus in GENERAL_FOCUS_CANDIDATES:
+            lookup = focus_relevance_lookups.get(
+                candidate_focus,
+                {
+                    "a": {},
+                    "b": {},
+                },
+            )
+
+            article_a_score = (
+                self._aggregate_article_side_relevance(
+                    lookup.get("a", {})
+                )
+            )
+            article_b_score = (
+                self._aggregate_article_side_relevance(
+                    lookup.get("b", {})
+                )
+            )
+
+            bilateral_article_relevance = float(
+                np.sqrt(
+                    article_a_score
+                    * article_b_score
+                )
+            )
+
+            global_score = self._clamp(
+                0.80 * bilateral_article_relevance
+                + 0.20
+                * max(
+                    article_a_score,
+                    article_b_score,
+                )
+            )
+
+            factor_scores[candidate_focus] = (
+                global_score
+            )
+            factor_side_scores[candidate_focus] = {
+                "a": article_a_score,
+                "b": article_b_score,
+                "bilateral": (
+                    bilateral_article_relevance
+                ),
+            }
+
+        if not factor_scores:
+            return None, {}, {}
+
+        priority = {
+            factor_name: index
+            for index, factor_name in enumerate(
+                GENERAL_FOCUS_CANDIDATES
+            )
+        }
+
+        selected_factor = max(
+            GENERAL_FOCUS_CANDIDATES,
+            key=lambda factor_name: (
+                factor_scores.get(
+                    factor_name,
+                    0.0,
+                ),
+                min(
+                    factor_side_scores.get(
+                        factor_name,
+                        {},
+                    ).get("a", 0.0),
+                    factor_side_scores.get(
+                        factor_name,
+                        {},
+                    ).get("b", 0.0),
+                ),
+                (
+                    factor_side_scores.get(
+                        factor_name,
+                        {},
+                    ).get("a", 0.0)
+                    + factor_side_scores.get(
+                        factor_name,
+                        {},
+                    ).get("b", 0.0)
+                ),
+                -priority.get(
+                    factor_name,
+                    len(priority),
+                ),
+            ),
+        )
+
+        return (
+            selected_factor,
+            factor_scores,
+            factor_side_scores,
+        )
+
+    def _aggregate_article_side_relevance(
+        self,
+        relevance_lookup: dict[str, float],
+    ) -> float:
+        """
+        Convert all calibrated chunk relevances from one article side into one
+        robust article-level relevance score.
+
+        The strongest quarter of chunks is averaged, capped at twelve chunks.
+        This represents the article's dominant focus without allowing one
+        isolated paragraph or a large number of unrelated paragraphs to decide
+        the global factor.
+        """
+
+        values = np.asarray(
+            [
+                self._clamp(value)
+                for value in relevance_lookup.values()
+                if math.isfinite(
+                    self._safe_float(value)
+                )
+            ],
+            dtype=float,
+        )
+
+        if values.size == 0:
+            return 0.0
+
+        top_k = max(
+            1,
+            int(
+                math.ceil(
+                    values.size
+                    * GENERAL_SELECTION_TOP_FRACTION
+                )
+            ),
+        )
+
+        top_k = min(
+            top_k,
+            GENERAL_SELECTION_MAX_TOP_K,
+            values.size,
+        )
+
+        strongest_values = np.sort(
+            values
+        )[-top_k:]
+
+        return self._clamp(
+            float(
+                np.mean(
+                    strongest_values
+                )
+            )
+        )
+
+    def _build_general_result_for_factor(
+        self,
+        *,
+        base_score: float,
+        a_chunk_id: str,
+        b_chunk_id: str,
+        selected_factor: str | None,
+        focus_relevance_lookup: dict[
+            str,
+            dict[str, float],
+        ],
+        selected_factor_global_score: float | None,
+        general_factor_scores: dict[str, float],
+        general_factor_side_scores: dict[
+            str,
+            dict[str, float],
+        ],
+    ) -> dict[str, Any]:
+        """
+        Calculate pair relevance using the one globally selected factor.
+
+        General mode deliberately remains non-boosting. It changes only factor
+        identification, factor relevance, and factor-specific ranking.
+        """
+
+        base_score = self._clamp(
+            base_score
+        )
+
+        if (
+            selected_factor
+            not in GENERAL_FOCUS_CANDIDATES
+        ):
+            return self._general_result(
+                base_score=base_score
+            )
+
+        a_relevance = self._clamp(
+            focus_relevance_lookup
+            .get("a", {})
+            .get(str(a_chunk_id), 0.0)
+        )
+
+        b_relevance = self._clamp(
+            focus_relevance_lookup
+            .get("b", {})
+            .get(str(b_chunk_id), 0.0)
+        )
+
+        bilateral_relevance = float(
+            np.sqrt(
+                a_relevance
+                * b_relevance
+            )
+        )
+
+        factor_relevance_score = self._clamp(
+            0.80 * bilateral_relevance
+            + 0.20
+            * max(
+                a_relevance,
+                b_relevance,
+            )
+        )
+
+        return {
+            "focus": "general",
+            "selected_factor": selected_factor,
+            "selected_factor_global_score": (
+                selected_factor_global_score
+            ),
+            "general_factor_scores": dict(
+                general_factor_scores
+            ),
+            "general_factor_side_scores": {
+                factor_name: dict(
+                    side_scores
+                )
+                for factor_name, side_scores
+                in general_factor_side_scores.items()
+            },
+
+            "a_focus_relevance": a_relevance,
+            "b_focus_relevance": b_relevance,
+            "bilateral_focus_relevance": (
+                bilateral_relevance
+            ),
+            "factor_relevance_score": (
+                factor_relevance_score
+            ),
+            "pair_focus_relevance": (
+                factor_relevance_score
+            ),
+
+            # General mode remains non-boosting.
+            "focus_gate": 0.0,
+            "max_focus_boost": 0.0,
+            "effective_boost": 0.0,
+            "scale_factor": 1.0,
+            "factor_adjustment": 0.0,
+            "factor_adjustment_percent": 0.0,
+            "focus_adjusted_score": base_score,
+            "final_score": base_score,
+        }
+
     def _general_result(
         self,
         *,
         base_score: float,
     ) -> dict[str, Any]:
+        """Return a safe fallback when no focus result can be calculated."""
+
         return {
             "focus": "general",
+            "selected_factor": None,
             "a_focus_relevance": 0.0,
             "b_focus_relevance": 0.0,
             "bilateral_focus_relevance": 0.0,
