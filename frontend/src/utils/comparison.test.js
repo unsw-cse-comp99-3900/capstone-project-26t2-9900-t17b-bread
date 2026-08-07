@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatReasonCode } from './comparison'
+import { formatFactorName, formatReasonCode } from './comparison'
 
 describe('comparison utilities', () => {
   it('formats backend reason codes into user-facing explanations', () => {
@@ -15,5 +15,11 @@ describe('comparison utilities', () => {
     expect(formatReasonCode('new_internal_reason_code')).toBe(
       'The comparison model matched these paragraphs based on their content.',
     )
+  })
+
+  it('formats backend factor identifiers for display', () => {
+    expect(formatFactorName('political')).toBe('Political')
+    expect(formatFactorName('social_impact')).toBe('Social Impact')
+    expect(formatFactorName(null, 'Factor')).toBe('Factor')
   })
 })

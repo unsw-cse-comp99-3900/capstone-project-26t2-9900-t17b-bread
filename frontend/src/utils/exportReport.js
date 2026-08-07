@@ -2,6 +2,7 @@ import { relationshipOptions } from '../config/appConfig'
 import { escapeHtml, getHistoryArticleTitle, getUrlHost, hasExternalArticleUrl } from './article'
 import {
   formatPublicScore,
+  formatFactorName,
   formatReasonCode,
   formatSummaryScore,
   getMatchCounts,
@@ -11,6 +12,7 @@ import {
 
 export function buildComparisonSummary({
   focus,
+  selectedFactor,
   articleA,
   articleB,
   matches,
@@ -20,6 +22,15 @@ export function buildComparisonSummary({
   const lines = [
     'Narrative Diff comparison summary',
     `Focus: ${getFocusLabel(focus)}`,
+    ...(selectedFactor
+      ? [
+          `${
+            focus === 'general'
+              ? 'Automatically selected factor'
+              : 'Selected factor'
+          }: ${formatFactorName(selectedFactor)}`,
+        ]
+      : []),
     `Article A: ${getHistoryArticleTitle(articleA, 'Article A')}`,
     `Article B: ${getHistoryArticleTitle(articleB, 'Article B')}`,
     `Similar: ${counts.aligned}`,
@@ -47,6 +58,7 @@ export function buildComparisonSummary({
 
 export function buildHtmlReport({
   focus,
+  selectedFactor,
   articleA,
   articleB,
   matches,
@@ -102,6 +114,7 @@ export function buildHtmlReport({
                       ${item.level ? `<span>${escapeHtml(item.level)}</span>` : ''}
                     </dd>
                     ${item.interpretation ? `<p>${escapeHtml(item.interpretation)}</p>` : ''}
+                    ${item.disclaimer ? `<small>${escapeHtml(item.disclaimer)}</small>` : ''}
                   </div>
                 `,
               )
@@ -412,6 +425,13 @@ export function buildHtmlReport({
       color: #627086;
       font-size: 13px;
     }
+    .score-list small {
+      display: block;
+      margin-top: 8px;
+      color: #627086;
+      font-size: 12px;
+      line-height: 1.5;
+    }
     .score-list dt {
       color: #627086;
       font-size: 11px;
@@ -507,6 +527,18 @@ export function buildHtmlReport({
             <dt>Focus</dt>
             <dd>${escapeHtml(getFocusLabel(focus))}</dd>
           </div>
+          ${
+            selectedFactor
+              ? `<div>
+                  <dt>${
+                    focus === 'general'
+                      ? 'Automatically selected factor'
+                      : 'Selected factor'
+                  }</dt>
+                  <dd>${escapeHtml(formatFactorName(selectedFactor))}</dd>
+                </div>`
+              : ''
+          }
           <div>
             <dt>Average match strength</dt>
             <dd>${escapeHtml(averageScoreLabel)}</dd>

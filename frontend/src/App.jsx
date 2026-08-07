@@ -337,6 +337,9 @@ function App() {
           <ComparisonSummaryCard
             matches={sortedComparisonMatches}
             backendSummary={comparison?.summary}
+            focus={comparison?.focus ?? focus}
+            selectedFactor={comparison?.selected_factor}
+            scoreGuides={comparison?.score_guides}
           />
 
           <ComparisonControls

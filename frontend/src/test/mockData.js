@@ -62,12 +62,14 @@ export const comparisonPayload = {
   ],
   comparison: {
     focus: 'general',
+    selected_factor: 'political',
     summary: {
       match_count: 3,
       aligned_count: 1,
       partially_aligned_count: 1,
       divergent_count: 1,
       average_match_strength: 13.7,
+      average_factor_relevance: 13,
       average_stance_discrepancy: 7.3,
       statement:
         'The two reports align on the eruption, but differ in emphasis and detail.',
@@ -80,6 +82,23 @@ export const comparisonPayload = {
         scale_max: 20,
         bands: [
           { min: 17, max: 20, level: 'Very strong', interpretation: 'Highly corresponding content.' },
+        ],
+      },
+      factor_relevance: {
+        title: 'Political Relevance',
+        factor: 'political',
+        question:
+          'How strongly is this matched pair related to the automatically selected political factor?',
+        scale_min: 0,
+        scale_max: 20,
+        disclaimer:
+          'Political was selected once for the complete article pair and is applied consistently to every matched pair.',
+        bands: [
+          { min: 0, max: 4, level: 'very_low', interpretation: 'Political content is largely absent.' },
+          { min: 5, max: 8, level: 'low', interpretation: 'Political content is mentioned only briefly.' },
+          { min: 9, max: 12, level: 'moderate', interpretation: 'Political content is meaningful but not central.' },
+          { min: 13, max: 16, level: 'strong', interpretation: 'Political content is an important part of the pair.' },
+          { min: 17, max: 20, level: 'very_strong', interpretation: 'Political content is central to the pair.' },
         ],
       },
       stance_discrepancy: {
@@ -102,6 +121,15 @@ export const comparisonPayload = {
           score_path: 'match_strength.score',
           direction: 'descending',
           description: 'Show strongest corresponding paragraph pairs first.',
+        },
+        {
+          key: 'selected_factor',
+          label: 'Most Relevant to Political',
+          score_path: 'factor_relevance.score',
+          secondary_score_path: 'match_strength.score',
+          direction: 'descending',
+          description:
+            'Show pairs most relevant to the political factor first. Match Strength is used as the tie-breaker.',
         },
         {
           key: 'most_divergent',
@@ -140,6 +168,13 @@ export const comparisonPayload = {
           level: 'Very strong',
           interpretation: 'The paragraphs describe the same event context.',
         },
+        factor_relevance: {
+          factor: 'political',
+          score: 12,
+          level: 'moderate',
+          interpretation:
+            'Political content is meaningful but not central to this matched pair.',
+        },
         stance_discrepancy: {
           score: 3,
           level: 'Low',
@@ -166,6 +201,12 @@ export const comparisonPayload = {
           level: 'Strong',
           interpretation: 'The paragraphs discuss related impacts.',
         },
+        factor_relevance: {
+          factor: 'political',
+          score: 18,
+          level: 'very_strong',
+          interpretation: 'Political content is central to this matched pair.',
+        },
         stance_discrepancy: {
           score: 10,
           level: 'Moderate',
@@ -191,6 +232,13 @@ export const comparisonPayload = {
           score: 9,
           level: 'Moderate',
           interpretation: 'The paragraphs have limited content overlap.',
+        },
+        factor_relevance: {
+          factor: 'political',
+          score: 9,
+          level: 'moderate',
+          interpretation:
+            'Political content is meaningful but not central to this matched pair.',
         },
         stance_discrepancy: {
           score: 9,

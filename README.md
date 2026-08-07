@@ -126,6 +126,12 @@ The frontend source is organised into components, hooks, services, utilities,
 and feature-specific styles so UI work can be updated without editing one large
 application file.
 
+Comparison scores, interpretations, score guides, and sorting options are
+provided by the backend. When a user selects General comparison, the backend
+chooses one global factor (political, sentiment, economic, or social) for the
+complete article pair. The frontend shows that automatically selected factor
+and applies its per-pair relevance scores consistently across the result.
+
 ## Validation
 
 Frontend:

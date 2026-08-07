@@ -44,6 +44,8 @@ http://localhost:5173
 - Paragraph-level colour highlights
 - Side-by-side desktop article view and mobile Article A/B tabs
 - Evidence panel with backend-provided 0-20 scores
+- General comparison with one backend-selected global factor
+- Per-pair relevance scores for the selected or automatically chosen factor
 - Backend-driven sorting and relationship filters
 - High-level summary card
 - Basic login/register modal
@@ -69,6 +71,30 @@ To add a demo:
 
 Selecting a demo fills the inputs only. It does not change the selected
 comparison focus.
+
+## Comparison Response
+
+The frontend treats the backend comparison response as the source of truth. It
+does not recalculate scores, score levels, interpretations, score ranges, or
+sorting rules.
+
+For General comparison, the backend evaluates political, sentiment, economic,
+and social factors across both articles, then returns one factor in
+`comparison.selected_factor`. The frontend displays it as the automatically
+selected factor. Every item in `comparison.matches` may contain a different
+`factor_relevance.score`, but all matches in that comparison use the same
+factor.
+
+The result UI uses:
+
+- `comparison.matches` for paragraph pairs and per-pair scores
+- `comparison.selected_factor` for the global factor
+- `comparison.summary` for counts and average scores
+- `comparison.score_guides` for titles, questions, score bands, and disclaimers
+- `comparison.sorting.options` for available sorting controls and score paths
+
+`selected_factor` and `factor_relevance` remain optional in the frontend so
+older saved comparisons can still be opened.
 
 ## Source Structure
 
@@ -137,6 +163,8 @@ Current coverage includes:
 - Comparison result display
 - Paragraph highlighting and evidence panel
 - Backend-driven score display and sorting
+- General-focus global factor display and factor-relevance score guides
+- Compatibility with saved results from the previous response shape
 - Relationship filters
 - Login/logout and account history behaviour
 - HTML report export
