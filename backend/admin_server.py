@@ -44,7 +44,11 @@ def parse_and_flatten_matrix(row_dict):
     score = None
 
     if isinstance(matrix_data, dict):
-        score = matrix_data.get("similarity_score") or matrix_data.get("overall_similarity")
+        score = (
+            matrix_data.get("similarity_score")
+            or matrix_data.get("overall_similarity")
+            or matrix_data.get("average_match_strength")
+        )
         inner_list = matrix_data.get("matches") or matrix_data.get("alignments") or matrix_data.get("chunks")
         if not isinstance(inner_list, list):
             lists = [v for v in matrix_data.values() if isinstance(v, list)]
@@ -53,7 +57,15 @@ def parse_and_flatten_matrix(row_dict):
         inner_list = matrix_data
 
     if score is None and inner_list:
-        match_scores = [m.get("score") for m in inner_list if isinstance(m, dict) and m.get("score") is not None]
+        match_scores = []
+        for m in inner_list:
+            if not isinstance(m, dict):
+                continue
+            s = m.get("score")
+            if s is None and isinstance(m.get("match_strength"), dict):
+                s = m["match_strength"].get("score")
+            if s is not None:
+                match_scores.append(s)
         if match_scores:
             score = round(sum(match_scores) / len(match_scores), 2)
 
