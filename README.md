@@ -109,6 +109,105 @@ docker compose -f docker/docker-compose.yml down -v
 docker compose -f docker/docker-compose.yml up --build
 ```
 
+## Backend
+
+The FastAPI backend is the processing and API layer between user inputs and the
+frontend. At a high level the demonstrated backend workflow is:
+
+```text
+User Input → FastAPI backend → Fetch and clean → Chunk and Classification → Response to Frontend
+```
+
+### Multi-source Article Ingestion
+
+The backend accepts multiple article sources and normalises them before later
+pipeline stages:
+
+| Source | Behaviour |
+|--------|-----------|
+| **URL** | Fetch the page and extract readable article body |
+| **Pasted text** | Accept raw article text directly |
+| **PDF / Word** | Parse uploaded `.pdf` / `.docx` documents |
+| **Scanned PDF** | Detect image-based PDFs and extract text with OCR |
+
+Key supporting behaviour:
+
+- PDF type detection (`text` vs `image`) before choosing parse or OCR
+- Optional PDF-to-Word export for cleaned OCR output
+- Structured validation and error codes for bad URLs, unsupported files,
+  timeouts, paywalls, and OCR availability issues
+- Partial success on compare: one article can fail while the other still returns
+
+Useful routes:
+
+- `POST /api/fetch` and `/api/fetch/stream`
+- `POST /api/upload`, `/api/upload/stream`
+- `POST /api/upload/pdf-type`
+- `POST /api/upload/pdf-to-word`
+
+### API Layer
+
+The API layer exposes ingestion and comparison endpoints for the frontend,
+including JSON and multipart file inputs, plus SSE streaming for long-running
+jobs.
+
+Main compare routes:
+
+- `POST /api/compare` and `/api/compare/stream`
+- `POST /api/compare/files` and `/api/compare/files/stream`
+
+Other backend API surfaces include health checks, auth, and history. Interactive
+docs are available at <http://localhost:8000/docs>.
+
+Design goals of the API layer:
+
+- one consistent request/response contract for URL, text, and file inputs
+- English progress events over SSE for frontend progress UI
+- stable error shape with `stage`, `code`, and `message` for UI handling
+
+### Monitoring and Observability
+
+The backend includes lightweight monitoring for demos and troubleshooting:
+
+| Feature | What it provides |
+|---------|------------------|
+| **Request correlation ID** | Each request gets `X-Request-ID`; latency is returned as `X-Process-Time` |
+| **Runtime diagnostics** | `GET /debug/info` shows uptime, config snapshot, and package versions |
+| **Detailed health check** | `GET /debug/health/detailed` reports memory, database, and OCR status |
+
+Related endpoints:
+
+- `GET /health` — basic app health
+- `GET /health/db` — database connectivity
+- `GET /debug/logs` — recent in-memory application logs
+
+Debug endpoints are gated by `DEBUG_ENABLED` so they can stay off outside local
+development.
+
+Implementation notes:
+
+- request middleware based on Starlette `BaseHTTPMiddleware`
+- structured logging with Python `logging`, optional human/JSON formats
+- request-id propagation through `contextvars`
+- in-memory log ring buffer for recent entries
+
+### Run Backend Locally
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+- API: <http://localhost:8000>
+- Swagger docs: <http://localhost:8000/docs>
+- Health: <http://localhost:8000/health>
+
+More API details are in `backend/APIenglish.md` and `backend/API中文.md`.
+Database integration notes are in `backend/DATABASE_INTEGRATION.md`.
+
 ## Run Frontend Locally
 
 ```powershell
