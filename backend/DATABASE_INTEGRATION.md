@@ -60,19 +60,57 @@ The backend loads `backend/.env` by absolute path, so uvicorn can be started fro
 
 ---
 
-## 3. Required tables (Sprint 2)
+## 3. Required tables
 
-The backend currently reads and writes **five tables**, defined in `database/database/init_db.sql`. The Sprint 1 `user_sessions` table no longer exists — `session_token` is generated in-memory per request and returned in the response, not persisted to its own table.
+The backend currently reads and writes **eight tables**, defined in `database/database/init_db.sql`. The Sprint 1 `user_sessions` table no longer exists — `session_token` is generated in-memory per request and returned in the response, not persisted to its own table.
 
 | Table | Purpose |
 |-------|---------|
+| `users` | Login accounts (hashed passwords, optional display name/email) |
+| `auth_tokens` | Opaque bearer tokens issued after login, with optional expiry |
+| `email_verification_codes` | Hashed one-time codes for email verification / password reset |
 | `articles` | Cleaned article title, domain, and main body text |
 | `paragraph_chunks` | One row per paragraph of an article |
 | `embeddings` | One SBERT vector per paragraph chunk |
 | `comparison_results` | Alignment matrix (`result_json`) + admin review state |
-| `history` | Which `comparison_results` rows were saved/bookmarked |
+| `history` | Which `comparison_results` rows were saved/bookmarked, per user |
 
-### 3.1 `articles`
+### 3.1 `users`
+
+| Column | Type | Constraints | Written from |
+|--------|------|-------------|--------------|
+| `id` | SERIAL | PRIMARY KEY | auto-generated |
+| `username` | TEXT | UNIQUE NOT NULL | `POST /api/auth/register` |
+| `email` | TEXT | UNIQUE when set (nullable) | `POST /api/auth/register` |
+| `password_hash` | TEXT | NOT NULL | PBKDF2 hash, never the raw password |
+| `display_name` | TEXT | nullable | `POST /api/auth/register` |
+| `created_at` | TIMESTAMP | DEFAULT now | server default |
+
+### 3.2 `auth_tokens`
+
+| Column | Type | Constraints | Written from |
+|--------|------|-------------|--------------|
+| `id` | SERIAL | PRIMARY KEY | auto-generated |
+| `user_id` | INT | FK → `users.id`, ON DELETE CASCADE | the logged-in user |
+| `token` | TEXT | UNIQUE NOT NULL | random bearer token issued on login/register |
+| `expires_at` | TIMESTAMP | nullable | optional token expiry |
+| `created_at` | TIMESTAMP | DEFAULT now | server default |
+
+Deleted on `POST /api/auth/logout`.
+
+### 3.3 `email_verification_codes`
+
+| Column | Type | Constraints | Written from |
+|--------|------|-------------|--------------|
+| `id` | SERIAL | PRIMARY KEY | auto-generated |
+| `email` | TEXT | NOT NULL | target address for the code |
+| `code_hash` | TEXT | NOT NULL | hashed one-time code, never stored in plain text |
+| `purpose` | TEXT | NOT NULL | e.g. `verify_email`, `password_reset` |
+| `expires_at` | TIMESTAMP | NOT NULL | code validity window |
+| `used_at` | TIMESTAMP | nullable | set once the code is consumed, to prevent replay |
+| `created_at` | TIMESTAMP | DEFAULT now | server default |
+
+### 3.4 `articles`
 
 | Column | Type | Constraints | Written from |
 |--------|------|-------------|--------------|
@@ -87,7 +125,7 @@ The backend currently reads and writes **five tables**, defined in `database/dat
 
 **Upsert behaviour:** If the same `url` is compared again, the row is updated (title, domain, body).
 
-### 3.2 `paragraph_chunks`
+### 3.5 `paragraph_chunks`
 
 | Column | Type | Constraints | Written from |
 |--------|------|-------------|--------------|
@@ -97,7 +135,7 @@ The backend currently reads and writes **five tables**, defined in `database/dat
 | `text_content` | TEXT | NOT NULL | paragraph text |
 | `created_at` | TIMESTAMP | DEFAULT now | server default |
 
-### 3.3 `embeddings`
+### 3.6 `embeddings`
 
 | Column | Type | Constraints | Written from |
 |--------|------|-------------|--------------|
@@ -107,7 +145,7 @@ The backend currently reads and writes **five tables**, defined in `database/dat
 | `model_name` | TEXT | nullable | model used to compute the vector |
 | `created_at` | TIMESTAMP | DEFAULT now | server default |
 
-### 3.4 `comparison_results`
+### 3.7 `comparison_results`
 
 | Column | Type | Constraints | Written from |
 |--------|------|-------------|--------------|
@@ -118,13 +156,16 @@ The backend currently reads and writes **five tables**, defined in `database/dat
 | `admin_notes` | TEXT | nullable | set by the admin review portal |
 | `created_at` | TIMESTAMP | DEFAULT now | server default |
 
-### 3.5 `history`
+### 3.8 `history`
 
 | Column | Type | Constraints | Written from |
 |--------|------|-------------|--------------|
 | `id` | SERIAL | PRIMARY KEY | auto-generated |
+| `user_id` | INT | FK → `users.id`, ON DELETE CASCADE, nullable | the logged-in user who saved the comparison |
 | `comparison_id` | INT | FK → `comparison_results.id`, ON DELETE CASCADE | the saved comparison |
 | `saved_at` | TIMESTAMP | DEFAULT now | server default |
+
+Unique on `(user_id, comparison_id)` — saving the same comparison again just refreshes `saved_at`.
 
 ---
 
@@ -134,6 +175,9 @@ The backend currently reads and writes **five tables**, defined in `database/dat
 |----------|---------------|-------|
 | `POST /api/fetch` | No | Preview only |
 | `POST /api/compare`, `/api/compare/stream`, `/api/compare/files`, `/api/compare/files/stream` | Yes | When both articles are processed successfully |
+| `POST /api/auth/register`, `/api/auth/login` | Yes | Writes `users` (register only) and `auth_tokens` |
+| `POST /api/auth/logout` | Yes | Deletes the row from `auth_tokens` |
+| `POST /api/history`, `DELETE /api/history/{id}`, `DELETE /api/history` | Yes | Writes/deletes rows in `history` for the logged-in user |
 | `GET /health` | No | App health only |
 | `GET /health/db` | No (ping only) | Runs `SELECT 1` |
 
@@ -199,7 +243,9 @@ Expected output:
 
 ```text
 CONNECTION_OK
-tables: ['articles', 'comparison_results', 'embeddings', 'history', 'paragraph_chunks']
+tables: ['articles', 'auth_tokens', 'comparison_results', 'email_verification_codes', 'embeddings', 'history', 'paragraph_chunks', 'users']
+users rows: 0
+auth_tokens rows: 0
 articles rows: 0
 paragraph_chunks rows: 0
 embeddings rows: 0
@@ -276,3 +322,4 @@ Check username, password, host, port, and database name in `backend/.env`. Resta
 |------|-------|
 | 2026-06-25 | Initial Sprint 1 integration guide (articles + user_sessions) |
 | 2026-07-26 | Sprint 2 refresh: `user_sessions` removed, `paragraph_chunks`/`embeddings`/`comparison_results`/`history` documented to match the current `init_db.sql`; `review_status`/`admin_notes` moved into `init_db.sql` instead of being patched in by `admin_server.py`; `compare.py`/`admin_server.py` now normalize `DATABASE_URL` the same way `app/db/base.py` does. |
+| 2026-08-05 | Sprint 3 refresh: documented the three new auth-related tables (`users`, `auth_tokens`, `email_verification_codes`); `history` now scoped per user via `history.user_id`; added the `/api/auth/*` and `/api/history/*` write-flow rows. |

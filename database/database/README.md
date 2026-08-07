@@ -17,23 +17,29 @@ response, not persisted to its own table.
 ## Database Schema Updates
 ### 2. `users` Table
 * **Purpose**: Stores login accounts with hashed passwords and optional display names.
+* **Note**: `email` is optional (nullable), but a partial unique index (`idx_users_email_unique`) enforces uniqueness whenever it is set, to support email-based login/verification.
 
 ### 3. `auth_tokens` Table
 * **Purpose**: Stores opaque bearer tokens issued after login. Tokens are linked to users and removed on logout.
+* **Note**: `expires_at` marks when a token should stop being accepted; indexed for efficient expiry lookups/cleanup.
 
-### 4. `paragraph_chunks` Table
+### 4. `email_verification_codes` Table
+* **Purpose**: Stores short-lived, hashed verification codes used for email verification and password-reset flows (`purpose` distinguishes the two). `used_at` marks a code as consumed so it cannot be replayed.
+* **Optimization**: Indexed on `(email, purpose, created_at DESC)` for fast "latest code for this email" lookups.
+
+### 5. `paragraph_chunks` Table
 * **Purpose**: Stores each article's paragraphs individually so they can be embedded and cross-mapped between article A and article B.
 * **Optimization**: Indexed by `article_id` for fast per-article lookups; cascades on article delete.
 
-### 5. `embeddings` Table
+### 6. `embeddings` Table
 * **Purpose**: Stores one SBERT vector embedding per paragraph chunk to support NLP alignment.
 * **Optimization**: Uses native PostgreSQL `FLOAT8[]` arrays to store embedding vectors efficiently; indexed by `chunk_id`.
 
-### 6. `comparison_results` Table
+### 7. `comparison_results` Table
 * **Purpose**: Stores the cross-mapping alignment matrix (`result_json`), plus administrative review tracking (`review_status`, `admin_notes`) used by the admin review portal.
 * **Optimization**: Uses the `JSONB` data type for flexible and high-performance storage of the alignment matrix. `review_status`/`admin_notes` are defined directly in `init_db.sql` (not patched in at runtime).
 
-### 7. `history` Table
+### 8. `history` Table
 * **Purpose**: Records which `comparison_results` rows have been saved/bookmarked by each logged-in user, and when.
 
 ## Backend Connection Guide (FastAPI / SQLAlchemy)
