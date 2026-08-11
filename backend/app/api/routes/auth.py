@@ -1,5 +1,6 @@
 """Simple database-backed authentication routes."""
 
+
 from __future__ import annotations
 
 import hashlib
@@ -19,6 +20,62 @@ from sqlalchemy import create_engine
 from app.db import dal
 from app.config import get_settings
 
+"""
+Authentication Routes — High-Level Overview
+-------------------------------------------
+
+This module implements a complete, database-backed authentication system using
+session tokens, PBKDF2 password hashing, and email-based verification codes.
+It provides registration, login, logout, password reset, and user identity
+resolution for all protected routes in the application.
+
+Key Responsibilities
+--------------------
+1. Secure Credential Handling
+   - Passwords are hashed using PBKDF2-HMAC with a per-user random salt.
+   - Hashes include scheme, iteration count, salt, and digest for future-proofing.
+   - Plaintext passwords are never stored or logged.
+
+2. Email Verification Workflow
+   - Registration and password reset require a 6-digit verification code.
+   - Codes are hashed before storage and expire after a short TTL.
+   - Cooldown enforcement prevents repeated code requests and email abuse.
+   - SMTP integration supports production email delivery; development mode
+     prints codes to the console.
+
+3. Session Token Management
+   - Login issues a secure, random session token stored in the database.
+   - Tokens include expiry timestamps and are cleaned up automatically.
+   - Logout invalidates the current token.
+   - Protected routes use get_current_user_from_header() to enforce authentication.
+
+4. Error Handling
+   - All authentication failures return structured HTTP errors with clear
+     messages (invalid credentials, expired session, incorrect verification code).
+   - Verification code errors are indistinguishable to prevent brute-force attacks.
+
+5. Request Validation
+   - Pydantic models validate usernames, emails, and password strength.
+   - Normalisation ensures consistent formatting (lowercased emails, trimmed input).
+
+Architectural Role
+------------------
+This module forms the security boundary of the application. It ensures that:
+
+    • Only authenticated users can access protected resources
+    • Passwords and verification codes are handled safely
+    • Session tokens are short-lived and revocable
+    • Registration and password reset flows are reliable and abuse-resistant
+
+The authentication system is intentionally simple and transparent:
+it uses database-backed tokens instead of JWTs, making token revocation,
+expiry management, and session invalidation straightforward.
+
+By isolating authentication logic in this module, the rest of the application
+can rely on a clean, consistent interface for user identity, without needing
+to handle password hashing, token storage, or email verification internally.
+"""
+
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -36,6 +93,11 @@ sync_url = sync_url.replace("postgresql+psycopg://", "postgresql://")
 sync_url = sync_url.replace("postgresql+asyncpg://", "postgresql://")
 
 engine = create_engine(sync_url)
+
+
+# Authentication router providing registration, login, password reset,
+# and session-token based user identification. Uses PBKDF2 hashing,
+# email verification codes, and database-backed token storage.
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -187,14 +249,15 @@ class PasswordResetConfirmRequest(BaseModel):
     @classmethod
     def _validate_new_password(cls, value: str) -> str:
         return _validate_password_strength(value)
-
-
+    
 class VerificationCodeResponse(BaseModel):
     status: str = "ok"
     message: str
     dev_code: str | None = None
 
-
+# Hash a plaintext password using PBKDF2-HMAC with a per-user random salt.
+# Produces a deterministic string format: scheme$iterations$salt$digest.
+# This avoids storing plaintext passwords and mitigates brute-force attacks.
 def _hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac(
@@ -210,6 +273,8 @@ def _hash_code(email: str, purpose: str, code: str) -> str:
     return hashlib.sha256(f"{email.lower()}:{purpose}:{code}".encode("utf-8")).hexdigest()
 
 
+# Generate a 6-digit numeric verification code for registration or password reset.
+# Codes are hashed before storage and expire after a short TTL to reduce misuse.
 def _generate_verification_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
@@ -224,7 +289,6 @@ def _token_expiry() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
         hours=get_settings().auth_token_ttl_hours,
     )
-
 
 def _send_verification_code(email: str, purpose: str, code: str) -> None:
     settings = get_settings()
@@ -262,7 +326,9 @@ def _send_verification_code(email: str, purpose: str, code: str) -> None:
             detail="Email could not be sent. Please check the SMTP configuration or use development mode.",
         ) from exc
 
-
+# Verify a user-supplied password against the stored PBKDF2 hash.
+# Recomputes the digest using the same salt and iterations, then compares
+# using constant-time comparison to prevent timing attacks.
 def _verify_password(password: str, stored_hash: str) -> bool:
     try:
         scheme, iterations, salt, expected = stored_hash.split("$", 3)
@@ -279,7 +345,11 @@ def _verify_password(password: str, stored_hash: str) -> bool:
 
     return hmac.compare_digest(digest, expected)
 
-
+# Validate a submitted verification code by checking:
+# 1. The latest unused code for the email/purpose
+# 2. Expiry timestamp
+# 3. Hash match (constant-time)
+# Ensures codes cannot be reused or brute-forced.
 def _verify_email_code(conn, email: str, purpose: str, code: str) -> dict:
     record = dal.get_latest_email_verification_code(conn, email, purpose)
     if record is None:
@@ -305,7 +375,8 @@ def _verify_email_code(conn, email: str, purpose: str, code: str) -> dict:
 
     return record
 
-
+# Enforce a cooldown between verification code requests to prevent spam
+# and reduce load on email infrastructure.
 def _enforce_code_request_cooldown(conn, email: str, purpose: str) -> None:
     latest = dal.get_latest_email_verification_request(conn, email, purpose)
     if latest is None:
@@ -321,7 +392,8 @@ def _enforce_code_request_cooldown(conn, email: str, purpose: str) -> None:
             detail=f"Please wait {remaining} seconds before requesting another code.",
         )
 
-
+# Extract a Bearer token from the Authorisation header.
+# Returns None if the header is missing or malformed.
 def _extract_bearer_token(authorization: str | None) -> str | None:
     if not authorization:
         return None
@@ -331,6 +403,9 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
     return token.strip()
 
 
+# Resolve the current user from a session token.
+# Raises 401 if token is missing, expired, or invalid.
+# Used by protected routes to enforce authentication.
 def get_current_user_from_header(authorization: str | None) -> dict:
     token = _extract_bearer_token(authorization)
     if token is None:
@@ -363,6 +438,8 @@ def get_optional_user_from_header(authorization: str | None) -> dict | None:
         return None
 
 
+# Create a new session token for the user and store it with an expiry.
+# Deletes expired tokens before inserting a new one to keep the table clean.
 def _auth_response_for_user(conn, user: dict) -> AuthResponse:
     token = secrets.token_urlsafe(32)
     dal.delete_expired_auth_tokens(conn)
@@ -396,7 +473,11 @@ def _create_verification_code_response(
     dev_code = code if not get_settings().smtp_host else None
     return VerificationCodeResponse(message=message, dev_code=dev_code)
 
+# Registration requires email verification. This endpoint only handles
+# the final step after the user submits a valid verification code.
 
+# Step 1 of registration: user requests a verification code.
+# Ensures username/email are unused and enforces cooldown.
 @router.post("/register/request-code", response_model=VerificationCodeResponse)
 async def request_register_code(payload: RequestRegisterCodeRequest) -> VerificationCodeResponse:
     username = payload.username.strip()
@@ -426,7 +507,8 @@ async def request_register_code(payload: RequestRegisterCodeRequest) -> Verifica
             "Verification code sent.",
         )
 
-
+# Step 2 of registration: user submits verification code + credentials.
+# Creates the user only after successful code validation.
 @router.post("/register/verify", response_model=AuthResponse)
 async def verify_register(payload: VerifyRegisterRequest) -> AuthResponse:
     username = payload.username.strip()
@@ -462,6 +544,8 @@ async def verify_register(payload: VerifyRegisterRequest) -> AuthResponse:
         return _auth_response_for_user(conn, user)
 
 
+# Step 1 of password reset: send a verification code to the user's email.
+# Only allowed if the email exists in the system.
 @router.post("/password/request-reset", response_model=VerificationCodeResponse)
 async def request_password_reset(payload: PasswordResetCodeRequest) -> VerificationCodeResponse:
     email = str(payload.email).strip().lower()
@@ -485,7 +569,8 @@ async def request_password_reset(payload: PasswordResetCodeRequest) -> Verificat
             "Password reset code sent.",
         )
 
-
+# Step 2 of password reset: validate code and update password.
+# Invalidates all existing auth tokens to force re-login.
 @router.post("/password/confirm-reset")
 async def confirm_password_reset(payload: PasswordResetConfirmRequest) -> dict[str, str]:
     email = str(payload.email).strip().lower()
@@ -519,7 +604,8 @@ async def register(payload: AuthRequest) -> AuthResponse:
     )
 
 
-
+# Authenticate a user by username and password.
+# On success, issue a new session token and return user profile info.
 @router.post("/login", response_model=AuthResponse)
 async def login(payload: LoginRequest) -> AuthResponse:
     username = payload.username.strip()
@@ -534,7 +620,8 @@ async def login(payload: LoginRequest) -> AuthResponse:
         return _auth_response_for_user(conn, user)
 
 
-
+# Return the authenticated user's profile.
+# Requires a valid session token.
 @router.get("/me", response_model=AuthUser)
 async def me(authorization: str | None = Header(default=None)) -> AuthUser:
     user = get_current_user_from_header(authorization)
@@ -545,7 +632,8 @@ async def me(authorization: str | None = Header(default=None)) -> AuthUser:
         display_name=user.get("display_name"),
     )
 
-
+# Invalidate the current session token by deleting it from the database.
+# Stateless logout: client simply discards the token.
 @router.post("/logout")
 async def logout(authorization: str | None = Header(default=None)) -> dict[str, str]:
     token = _extract_bearer_token(authorization)

@@ -30,6 +30,69 @@ router = APIRouter(prefix="/api/upload", tags=["upload"])
 
 _DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
+"""
+Upload Controller — High-Level Overview
+---------------------------------------
+
+This module provides all endpoints for ingesting, analysing, and converting
+uploaded PDF and Word documents. It acts as the entry point for transforming
+user-uploaded files into clean, readable article text suitable for the NLP
+pipeline and comparison system.
+
+Key Responsibilities
+--------------------
+1. File Validation
+   - Ensures uploaded files have supported extensions (.pdf, .docx).
+   - Rejects invalid or unsafe uploads early with clear error messages.
+   - Uses validate_upload_file() to enforce size, type, and safety constraints.
+
+2. Document Parsing
+   - parse_uploaded_document_async() extracts text, metadata, and structure
+     from PDFs and Word documents.
+   - Supports both text-based PDFs and scanned/image PDFs.
+   - Integrates with OCR (Tesseract) when available to recognise text in
+     image-based PDFs.
+
+3. Preprocessing
+   - After extraction, preprocess_article() cleans text, segments paragraphs,
+     normalises whitespace, and prepares the article for display and comparison.
+   - Produces a RawArticle object containing title, domain, body text, and
+     source type.
+
+4. PDF Type Detection
+   - analyze_pdf() determines whether a PDF is text-based or image-based.
+   - Returns page counts, image presence, and character density.
+   - Helps the frontend choose the correct upload endpoint (direct upload vs
+     OCR-based conversion).
+
+5. PDF-to-Word Conversion
+   - convert_image_pdf_to_word() performs OCR on scanned PDFs, removes noise,
+     and produces a downloadable .docx file.
+   - Text-based PDFs are exported directly without OCR.
+   - Response includes metadata headers such as extracted text preview.
+
+6. Streaming Mode (SSE)
+   - All upload operations support real-time progress updates via
+     streaming_response_from_progress().
+   - Allows the frontend to display live progress for large or slow documents.
+
+Architectural Role
+------------------
+The Upload Controller is the ingestion layer for document-based content.
+It ensures that:
+
+    • PDFs and Word files are safely and consistently parsed
+    • OCR is applied when needed
+    • Clean article text is produced for downstream NLP processing
+    • Users receive meaningful progress updates during long-running uploads
+
+By isolating upload logic in this module, the system maintains:
+
+    • Clear separation between file ingestion and NLP comparison
+    • Reusable parsing and preprocessing services
+    • Predictable, structured responses for the React frontend
+    • A safe and robust pipeline for handling diverse document types
+"""
 
 async def _process_upload(file: UploadFile) -> UploadResponse:
     if not file.filename:

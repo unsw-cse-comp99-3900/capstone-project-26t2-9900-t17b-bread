@@ -37,6 +37,69 @@ from app.services.pipeline import (
 from app.services.progress import ProgressTracker
 from app.services.streaming import streaming_response_from_progress
 
+"""
+Compare Controller — High-Level Overview
+----------------------------------------
+
+This module implements the main API endpoint for article-to-article comparison.
+It acts as the orchestration layer between:
+
+    • User input (URLs, uploaded files, comparison focus)
+    • The NLP pipeline (fetch → preprocess → summarise → embed → align → score)
+    • Database access (article caching, comparison result storage)
+    • Streaming progress updates for long-running comparisons
+
+Key Responsibilities
+--------------------
+1. Input Normalisation
+   - Accepts URLs, raw text, or uploaded files.
+   - Normalises and validates inputs before passing them to the pipeline.
+
+2. Pipeline Coordination
+   - Invokes the multi-stage comparison pipeline:
+        Article Fetch → Preprocess → Summary → Embeddings → Alignment →
+        Hybrid Scoring → Crossmapping → Scaling → Explanation
+   - Wraps pipeline execution in a timeout to prevent runaway comparisons.
+
+3. Error Handling
+   - Converts internal pipeline errors into structured API responses.
+   - Provides stage-specific error messages for frontend display.
+
+4. Score Construction
+   - Converts internal model scores (0–1 floats) into public-facing 0–20 scores.
+   - Builds match-strength, factor-relevance, and stance-discrepancy objects.
+   - Generates human-readable interpretations for frontend tooltips.
+
+5. Relationship Mapping
+   - Converts internal relationship objects into frontend-ready match entries.
+   - Includes text previews, alignment labels, reason codes, and explanations.
+
+6. Summary + Metadata
+   - Produces article-level summary statistics (counts, averages).
+   - Generates sorting metadata and score guides for the UI.
+
+7. Streaming Support
+   - Integrates with ProgressTracker and streaming_response_from_progress
+     to allow the frontend to show real-time progress for long comparisons.
+
+Architectural Role
+------------------
+This controller is the boundary between the FastAPI HTTP layer and the
+application-level NLP pipeline. It does not perform any NLP itself; instead,
+it prepares inputs, invokes the pipeline, interprets results, and constructs
+a clean, stable API response for the React frontend.
+
+All raw model outputs (cosine similarity, BM25 scores, NLI probabilities,
+hybrid scores, confidence values) remain internal and are never exposed
+directly. Only interpreted, user-facing scores and explanations are returned.
+
+This ensures:
+    • Transparency
+    • Predictability
+    • Safety
+    • A consistent UX across all comparison modes
+"""
+
 
 load_dotenv()
 

@@ -1,5 +1,66 @@
 # backend/app/services/candidate_cross_mapping_service.py
 
+"""
+Candidate Cross-Mapping Service — High-Level Overview
+-----------------------------------------------------
+
+This module builds high‑recall candidate mappings between article A and article B
+paragraph chunks for downstream bidirectional NLI (Natural Language Inference).
+It operates after hybrid scoring and before final alignment, contradiction
+analysis, and relationship classification.
+
+Its purpose is to identify *every* pair of paragraph chunks that may be worth
+examining for semantic alignment or contradiction, even if their initial scores
+are not strong enough for final mapping.
+
+Key Responsibilities
+--------------------
+1. Permissive Candidate Filtering
+   - Applies two rules:
+        • Ordinary candidate rule (moderate hybrid + moderate lexical/semantic)
+        • Strong-signal override rule (lower hybrid + strong lexical/semantic)
+   - Ensures that potential contradiction pairs are not prematurely discarded.
+
+2. Contextual Consistency Scoring
+   - Examines neighbouring A→B pairs (e.g., A‑p3→B‑p5 neighbours A‑p2→B‑p4).
+   - Computes context_support and context_boost based on nearby strong pairs.
+   - Produces mapping_score = base_hybrid_score + context_boost.
+   - Does *not* apply a final threshold; all candidates remain eligible.
+
+3. Strict Input Boundaries
+   - Only uses:
+        • cosine_score
+        • bm25_score
+        • base_hybrid_score
+        • positional metadata
+   - Does *not* use factor relevance, focus scaling, or adjusted hybrid scores.
+   - Prevents focus/factor metadata from leaking into contradiction analysis.
+
+4. Deterministic Ordering
+   - Sorts candidate mappings by mapping_score and article order.
+   - Ordering is for inspection and batching only; no candidates are removed.
+
+Architectural Role
+------------------
+CandidateCrossMappingService sits between hybrid scoring and final cross‑mapping.
+It ensures:
+
+    • High recall: all potentially meaningful pairs reach NLI
+    • No premature filtering based on factor relevance or focus
+    • Context-aware scoring that rewards structurally consistent mappings
+    • A clean separation between content-based evidence and factor scaling
+
+This service intentionally does *not*:
+    • Perform final one-to-one mapping
+    • Classify relationships (aligned / partial / divergent)
+    • Confirm contradictions
+    • Apply mapping_score thresholds
+    • Use focus or factor relevance
+
+It provides a permissive, content‑driven candidate set that downstream NLI
+components refine into final aligned or contradictory relationships.
+"""
+
 from __future__ import annotations
 
 import math

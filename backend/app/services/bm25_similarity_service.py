@@ -1,5 +1,67 @@
 # backend/app/services/bm25_similarity_service.py
 
+"""
+BM25 Similarity Service — High-Level Overview
+---------------------------------------------
+
+This module provides lexical similarity scoring using the BM25 algorithm.
+It is one of the two core similarity components in the comparison pipeline:
+    • BM25 (lexical / keyword overlap)
+    • SBERT (semantic / embedding-based similarity)
+
+BM25 focuses strictly on word-level matching and does not perform semantic
+reasoning, alignment, or relationship classification. Its output is combined
+later with cosine similarity to produce hybrid scores.
+
+Key Responsibilities
+--------------------
+1. Tokenization and Stopword Filtering
+   - Tokenizes text using a lightweight regex that preserves alphanumeric words.
+   - Removes common stopwords while keeping negation terms (“not”, “no”,
+     “without”) because they meaningfully affect news statements.
+   - Ensures BM25 operates on informative lexical units.
+
+2. Chunk Validation and Preparation
+   - Delegates initial filtering (empty text, invalid IDs) to the candidate
+     pair service.
+   - Removes chunks that produce no useful tokens.
+   - Stores token lists in `_tokens` for efficient BM25 scoring.
+
+3. Candidate Pair Generation
+   - Builds all possible A–B paragraph chunk pairs using the candidate pair
+     service.
+   - Does not compute scores or decide alignment; it only prepares valid pairs.
+
+4. BM25 Score Matrix Computation
+   - Treats Article B chunks as the corpus and Article A chunks as queries.
+   - Produces:
+        • raw_scores: original BM25 values
+        • scores: normalized 0–1 values for hybrid scoring
+   - Normalization ensures compatibility with cosine similarity.
+
+5. Pair-Level Scoring
+   - Computes BM25 scores for each candidate pair.
+   - Applies optional minimum-score filtering.
+   - Returns structured results including chunk IDs, indices, and both raw
+     and normalized scores.
+
+Architectural Role
+------------------
+BM25 provides the lexical foundation for the hybrid similarity model. It ensures:
+
+    • Paragraph pairs with strong keyword overlap are surfaced
+    • Negation-sensitive lexical differences are preserved
+    • Hybrid scoring can combine semantic and lexical signals
+    • Alignment decisions later in the pipeline have reliable lexical evidence
+
+By isolating BM25 logic in this module, the system maintains:
+
+    • Clear separation between lexical and semantic similarity
+    • Reusable tokenization and scoring routines
+    • Predictable behaviour across all article types (URL, PDF, upload)
+    • A stable interface for candidate pair generation and hybrid scoring
+"""
+
 from __future__ import annotations
 
 import re

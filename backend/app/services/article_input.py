@@ -1,4 +1,67 @@
-"""Resolve article inputs from URLs or uploaded files."""
+"""
+Article Input Resolver — High-Level Overview
+--------------------------------------------
+
+This module provides a unified interface for loading article content from
+three different user input sources:
+
+    • Remote URLs
+    • Pasted text
+    • Uploaded documents (PDF, Word, image-based PDFs via OCR)
+
+It ensures that all article inputs—regardless of origin—are normalised into a
+consistent RawArticle structure before entering the NLP pipeline.
+
+Key Responsibilities
+--------------------
+1. Unified Input Abstraction
+   - ArticleInput dataclass represents one article source with a stable
+     article_ref ("A", "B", "upload", "fetch").
+   - Supports three modes:
+        • URL-based ingestion
+        • Direct pasted text
+        • Uploaded file bytes
+
+2. URL Resolution
+   - Uses fetch_article() to retrieve and clean remote content.
+   - Validates presence and formatting of the URL.
+   - Integrates with ProgressTracker for stage updates.
+
+3. Text Resolution
+   - _resolve_text_article() handles pasted text without any network or OCR.
+   - Enforces minimum length to prevent accidental empty/short submissions.
+   - Extracts a lightweight title from the first non-empty line.
+
+4. Upload Resolution
+   - Delegates to parse_uploaded_document_async() for PDF/Word ingestion.
+   - Supports OCR for scanned PDFs when available.
+   - Ensures uploaded files are present and valid before processing.
+
+5. Error Handling
+   - Raises PipelineError with stage-specific codes for:
+        • Missing input
+        • Empty text
+        • Too-short text
+        • Missing upload bytes
+   - Ensures consistent error formatting across all ingestion paths.
+
+Architectural Role
+------------------
+The Article Input Resolver is the gateway into the NLP pipeline. It ensures:
+
+    • All article sources are normalised into RawArticle objects
+    • The pipeline never needs to know whether content came from a URL,
+      pasted text, or an uploaded file
+    • Validation and error handling occur before expensive processing
+    • Progress updates are emitted consistently across all input types
+
+By isolating input resolution in this module, the system maintains:
+
+    • Clear separation between ingestion and NLP processing
+    • Reusable logic for all controllers (compare, fetch, upload)
+    • Predictable behaviour across diverse user input formats
+"""
+
 
 from __future__ import annotations
 

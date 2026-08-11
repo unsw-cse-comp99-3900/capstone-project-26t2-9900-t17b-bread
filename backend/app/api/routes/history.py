@@ -12,6 +12,64 @@ from app.api.routes.auth import DATABASE_URL, get_current_user_from_header
 from app.db import dal
 from app.db.base import _normalize_url
 
+"""
+User Comparison History Routes — High-Level Overview
+----------------------------------------------------
+
+This module provides the API endpoints that allow authenticated users to
+save, list, and manage their personal comparison history. It acts as the
+interface between:
+
+    • The authentication system (session-token based)
+    • The comparison result storage layer
+    • The React frontend’s history panel
+
+Key Responsibilities
+--------------------
+1. Authenticated Access
+   - All routes require a valid session token.
+   - Uses get_current_user_from_header() to enforce login and prevent
+     cross-user access to history items.
+
+2. History Listing
+   - Retrieves all comparison results saved by the current user.
+   - Converts raw database rows into structured, frontend-ready objects
+     including titles, labels, focus, and comparison payload.
+
+3. History Saving
+   - Allows users to save a previously computed comparison result.
+   - Validates that the comparison exists before saving.
+   - Returns the newly saved item in a consistent shape.
+
+4. History Deletion
+   - Supports deleting a single history item or clearing all history
+     for the authenticated user.
+   - Ensures users can only delete their own history entries.
+
+5. Payload Normalisation
+   - _history_item() transforms stored JSON into a stable, predictable
+     response format for the frontend.
+   - Extracts article titles, focus mode, and comparison summary for
+     display in the history list.
+
+Architectural Role
+------------------
+This controller provides a simple persistence layer for user-specific
+comparison results. It does not perform any NLP or comparison logic; instead,
+it stores and retrieves the outputs produced by the Compare Controller.
+
+By isolating history management in its own module, the system maintains:
+
+    • Clear separation of concerns
+    • Secure, user-scoped access to saved results
+    • A clean API surface for the frontend’s history sidebar
+    • Consistent formatting of saved comparison entries
+
+The history system is intentionally lightweight: it stores only the final
+comparison payload and metadata, allowing users to revisit past comparisons
+without recomputing the NLP pipeline.
+"""
+
 # Force sync driver for SQLAlchemy
 sync_url = DATABASE_URL
 
