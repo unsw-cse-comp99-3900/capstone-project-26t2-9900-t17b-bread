@@ -205,7 +205,7 @@ uvicorn app.main:app --reload
 - Swagger docs: <http://localhost:8000/docs>
 - Health: <http://localhost:8000/health>
 
-More API details are in `backend/APIenglish.md` and `backend/API中文.md`.
+More API details are in `backend/API.md`.
 Database integration notes are in `backend/DATABASE_INTEGRATION.md`.
 
 ## Run Frontend Locally

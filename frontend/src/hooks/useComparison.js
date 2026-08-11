@@ -138,6 +138,7 @@ export function useComparison({
 
     try {
       const request = buildCompareRequest()
+      // The stream sends progress updates first and returns the full result at the end.
       const data = await streamComparison(request, (progressEvent) => {
         setProgress({
           percent: progressEvent.percent ?? 0,
@@ -212,6 +213,7 @@ export function useComparison({
   const articleA = articles.find((article) => article.article_ref === 'A')
   const articleB = articles.find((article) => article.article_ref === 'B')
   const comparisonMatches = getComparisonMatches(comparison)
+  // Sorting options come from the backend, so the frontend uses the same score rules.
   const sortingOptions = getSortingOptions(comparison)
   const activeSortingOption =
     sortingOptions.find((option) => option.key === selectedSort) ??
