@@ -39,6 +39,7 @@ export async function parseEventStream(response, onProgress) {
   }
 
   const decoder = new TextDecoder()
+  // A network chunk may end in the middle of an SSE message, so keep the remainder.
   let buffer = ''
 
   while (true) {

@@ -305,6 +305,7 @@ export function sortMatchesByBackendOption(matches, sortingOption) {
   const direction = sortingOption.direction ?? 'descending'
   const secondaryDirection = sortingOption.secondary_direction ?? direction
 
+  // Use the backend score paths and the secondary score as a tie-breaker.
   return [...matches].sort((matchA, matchB) => {
     const primaryComparison = compareNullableNumbers(
       getValueAtPath(matchA, primaryPath),
@@ -340,6 +341,7 @@ export function normalizeLabel(label) {
 }
 
 export function normalizeMatch(match, index) {
+  // Older saved results use different field names, so normalize both response formats.
   const label = normalizeLabel(match.label ?? match.relationship)
   const paragraphAIndex =
     match.a_paragraph_index ??

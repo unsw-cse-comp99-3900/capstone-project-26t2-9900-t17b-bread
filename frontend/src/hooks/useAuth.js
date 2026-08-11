@@ -85,6 +85,7 @@ export function useAuth({
   useEffect(() => {
     let isActive = true
 
+    // Check the saved token on page load and remove it if the backend rejects it.
     async function loadAccountData() {
       if (!authToken) {
         onHistoryItemsChange([])
@@ -316,6 +317,7 @@ export function useAuth({
     if (authToken) {
       await logoutUser(authToken).catch(() => {})
     }
+    // Clear the workspace as well so the next user cannot see the previous result.
     saveAuthSession(null)
     setAuthSession(null)
     onWorkspaceReset()

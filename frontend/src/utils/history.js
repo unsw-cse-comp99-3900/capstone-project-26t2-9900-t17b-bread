@@ -63,6 +63,7 @@ export function getComparisonHistoryKey({ articles, articleA, articleB, focus })
     return ''
   }
 
+  // Focus is included because the same article pair can have different comparisons.
   return `${normalizeHistoryValue(focus ?? 'general')}::${articleAKey}::${articleBKey}`
 }
 
